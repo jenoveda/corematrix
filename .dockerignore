@@ -1,0 +1,16 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.server.json
+!vite.config.ts
+!index.html
+!src/
+!src/**
+!server/
+!server/**
+!tests/
+!tests/**
+!deploy/
+!deploy/compose-nginx.conf

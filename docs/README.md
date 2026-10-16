@@ -12,6 +12,8 @@ GPU 未来预约、资源计划与延迟计费见 [预约契约](17-gpu-reservat
 
 完整的新增业务契约：[GPU 购买与计费](12-gpu-rental-billing.md)、[流式推理与计费](14-streaming-billing.md)。
 
+Linux 一键启动前后端与独立测试数据卷见 [Docker Compose 测试部署](21-compose-testing.md)。
+
 ## 阅读顺序
 
 | 文档                                       | 内容                                     | 主要使用者     |

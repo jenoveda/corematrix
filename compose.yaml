@@ -1,0 +1,62 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 120s
+    env_file:
+      - path: .env.compose
+        required: false
+    environment:
+      # HTTP testing only; production keeps its HTTPS/Secure Cookie requirements.
+      NODE_ENV: development
+      API_PORT: '3001'
+      DATABASE_PATH: /var/lib/corematrix/corematrix.sqlite
+      TRUSTED_PROXY_IPS: 127.0.0.1
+    ports:
+      # Nginx shares this network namespace; the API port is not published.
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_PORT:-8080}:8080'
+    volumes:
+      - corematrix-data:/var/lib/corematrix
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/api/health', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      target: web
+    network_mode: service:api
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/api/health']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  corematrix-data:

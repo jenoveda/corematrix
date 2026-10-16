@@ -15,6 +15,12 @@ React + TypeScript 双端控制台，Node.js HTTP 后端，SQLite 持久化账�
 
 后续产品、架构、数据库、接口、服务器 Agent、部署、计费、四语言和测试任务见 [开发文档目录](docs/README.md)。其中标明已实现能力与待开发契约。
 
+## Docker Compose 测试部署
+
+Linux 服务器安装 Docker Engine 与 Compose 插件 2.24+ 后，在项目根目录执行 `docker compose up -d --build --wait`，即可启动前后端。默认地址为 `http://服务器IP:8080`，数据库保存在独立 Docker 数据卷中，不读取本机 `.env` 或 `data/`。
+
+端口、管理员初始化、升级和数据保留步骤见 [Compose 测试部署手册](docs/21-compose-testing.md)。此配置只用于可信测试网络的 HTTP 功能测试；HTTPS 生产部署继续使用 [生产部署说明](docs/20-production-deployment.md)。
+
 ## 本地启动
 
 需要 Node.js **22.18+**。SQLite 使用 Node 内置 `node:sqlite`，不需要安装数据库服务。
