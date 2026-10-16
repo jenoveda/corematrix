@@ -1,0 +1,46 @@
+# Include inside nginx's http block. Replace domain, certificate and release paths.
+# Do not use the distribution's combined access log: it records URL query strings.
+log_format corematrix '$request_method $status $request_time $upstream_http_x_request_id';
+
+server {
+    listen 80;
+    server_name console.example.invalid;
+    access_log /var/log/nginx/corematrix-access.log corematrix;
+    # Parsing errors precede location selection and may include token-bearing URLs.
+    error_log /dev/null;
+    return 308 https://console.example.invalid$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name console.example.invalid;
+    ssl_certificate /etc/corematrix/tls/fullchain.pem;
+    ssl_certificate_key /etc/corematrix/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /opt/corematrix/current/dist;
+    index index.html;
+    client_max_body_size 256k;
+    access_log /var/log/nginx/corematrix-access.log corematrix;
+    error_log /dev/null;
+
+    location ~ ^/(api|v1)(/|$) {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        # This template is a single edge proxy: discard untrusted client prefixes.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Real-IP "";
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_next_upstream off;
+        proxy_read_timeout 90s;
+        proxy_send_timeout 90s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "corematrix",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "dev:api": "node --env-file-if-exists=.env --watch server/index.ts",
+    "start": "node --env-file-if-exists=.env server/index.ts",
+    "create-admin": "node --env-file-if-exists=.env server/create-admin.ts",
+    "test:agent": "go -C agent test -race ./...",
+    "test:nginx": "node scripts/verify-nginx.mjs",
+    "test:linux": "node scripts/verify-linux.mjs",
+    "build:agent": "sh scripts/build-agent.sh",
+    "db:backup": "node --env-file-if-exists=.env server/database-cli.ts backup",
+    "db:restore": "node --env-file-if-exists=.env server/database-cli.ts restore",
+    "db:verify": "node --env-file-if-exists=.env server/database-cli.ts verify"
+  },
+  "dependencies": {
+    "lucide-react": "^1.57.0",
+    "nodemailer": "^10.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "stripe": "^23.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}

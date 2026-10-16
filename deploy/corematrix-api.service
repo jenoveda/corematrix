@@ -1,0 +1,26 @@
+[Unit]
+Description=CoreMatrix API and billing control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=corematrix
+Group=corematrix
+WorkingDirectory=/opt/corematrix/current
+EnvironmentFile=/etc/corematrix/api.env
+ExecStart=/usr/bin/node /opt/corematrix/current/server/index.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+StateDirectory=corematrix
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/corematrix
+
+[Install]
+WantedBy=multi-user.target

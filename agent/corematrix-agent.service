@@ -1,0 +1,18 @@
+[Unit]
+Description=CoreMatrix GPU Node Agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/corematrix-agent.env
+ExecStart=/usr/local/bin/corematrix-agent
+Restart=always
+RestartSec=10
+UMask=0077
+# Docker access is privileged; restrict this service and its environment to node operators.
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+test-results/
+data/
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+agent/agent.env
+
+agent/bin/
