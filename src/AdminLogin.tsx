@@ -9,7 +9,7 @@ export default function AdminLogin({portal="admin",allowRegister=false}:{portal?
   const [register,setRegister]=useState(false);
   return <>
     <PageHeader title={t(portal==="admin"?"auth.adminRole":"app.provider") + " · " + t(register?"auth.register":"auth.login")} description={t(portal==="admin"?"auth.adminNote":"provider.note")} />
-    <Panel title={t("auth.login")}>
+    <Panel title={t(register ? "auth.register" : "auth.login")}>
       <form className="panel-body form" onSubmit={async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
