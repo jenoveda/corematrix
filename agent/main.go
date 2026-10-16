@@ -87,6 +87,7 @@ func (a *agent) heartbeat(ctx context.Context) (string, error) {
 			WorkspaceError   string `json:"workspaceError"`
 			ExpirySupported  bool   `json:"expirySupported"`
 			RenewalSupported bool   `json:"renewalSupported"`
+			NodeScopedKeys   bool   `json:"nodeScopedKeys"`
 		} `json:"capabilities"`
 		ExpiryAcks     []rentalDeadline `json:"expiryAcks"`
 		InventoryError *string          `json:"inventoryError"`
@@ -94,6 +95,10 @@ func (a *agent) heartbeat(ctx context.Context) (string, error) {
 		Containers     []container      `json:"containers"`
 	}{identity: a.identity(), BootID: a.boot, Sequence: a.sequence, GPUs: gpus, Containers: containers}
 	payload.Capabilities.Version = "4-go"
+	if a.cfg.NodeScopedKeys {
+		payload.Capabilities.Version = "5-go"
+	}
+	payload.Capabilities.NodeScopedKeys = a.cfg.NodeScopedKeys
 	payload.Capabilities.RenewalSupported = true
 	payload.Capabilities.ExpirySupported = true
 	payload.ExpiryAcks = a.expirySnapshot()
@@ -115,6 +120,10 @@ func (a *agent) heartbeat(ctx context.Context) (string, error) {
 		Generation      int64            `json:"generation"`
 		ServerTime      time.Time        `json:"serverTime"`
 		RentalDeadlines []rentalDeadline `json:"rentalDeadlines"`
+		Credentials     struct {
+			Inference string `json:"inference"`
+			Workspace string `json:"workspace"`
+		} `json:"credentials"`
 	}
 	started := time.Now()
 	_, err = a.api(ctx, "/api/agent/heartbeat", payload, &reply)
@@ -123,6 +132,17 @@ func (a *agent) heartbeat(ctx context.Context) (string, error) {
 	}
 	if !reply.OK || reply.Generation < 1 {
 		return inventoryError, diagnostic("invalid_heartbeat_response")
+	}
+	if a.cfg.NodeScopedKeys {
+		if !nodeCredentialPattern.MatchString(reply.Credentials.Inference) || !nodeCredentialPattern.MatchString(reply.Credentials.Workspace) || reply.Credentials.Inference == reply.Credentials.Workspace {
+			return inventoryError, diagnostic("node_credentials_missing")
+		}
+		if err := os.Setenv("INFERENCE_COREMATRIX_NODE_INFERENCE", reply.Credentials.Inference); err != nil {
+			return inventoryError, diagnostic("node_credentials_unavailable")
+		}
+		if err := os.Setenv("INFERENCE_COREMATRIX_NODE_WORKSPACE", reply.Credentials.Workspace); err != nil {
+			return inventoryError, diagnostic("node_credentials_unavailable")
+		}
 	}
 	if reply.RentalDeadlines != nil {
 		if err = a.updateExpiries(reply.RentalDeadlines, reply.ServerTime, time.Since(started), containers, inventoryError == ""); err != nil {

@@ -13,11 +13,22 @@ services:
       # HTTP testing only; production keeps its HTTPS/Secure Cookie requirements.
       NODE_ENV: development
       API_PORT: '3001'
+      ADMIN_API_PORT: '3002'
+      PROVIDER_API_PORT: '3003'
+      WEB_PORT: '8080'
+      ADMIN_WEB_PORT: '8081'
+      PROVIDER_WEB_PORT: '8082'
+      TLS_MANAGED: '1'
       DATABASE_PATH: /var/lib/corematrix/corematrix.sqlite
       TRUSTED_PROXY_IPS: 127.0.0.1
     ports:
       # Nginx shares this network namespace; the API port is not published.
       - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_PORT:-8080}:8080'
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_ADMIN_PORT:-8081}:8081'
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_PROVIDER_PORT:-8082}:8082'
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_HTTPS_PORT:-443}:3443'
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_ADMIN_HTTPS_PORT:-8443}:3444'
+      - '${COREMATRIX_BIND_IP:-0.0.0.0}:${COREMATRIX_PROVIDER_HTTPS_PORT:-8444}:3445'
     volumes:
       - corematrix-data:/var/lib/corematrix
     read_only: true

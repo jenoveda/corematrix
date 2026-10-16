@@ -32,6 +32,9 @@ import type { StripeConfig } from "./payments.ts";
 import { clientIpResolver } from "./client-ip.ts";
 import { Operations } from "./operations.ts";
 import type { OpsMail } from "./operations.ts";
+import type { Certificates } from "./certificates.ts";
+import { ownedServers, handleProviders } from "./providers.ts";
+import { runtimeCredential } from "./node-credentials.ts";
 import { reservationWindow, SETUP_MS } from "./reservations.ts";
 import {
   recordExpense,
@@ -44,6 +47,10 @@ type Options = {
   databasePath: string;
   allowedOrigins?: string[];
   publicOrigin?: string;
+  adminPublicOrigin?: string;
+  providerPublicOrigin?: string;
+  splitPortals?: boolean;
+  certificates?: Certificates;
   secureCookie?: boolean;
   upstreamTimeoutMs?: number;
   mail?: AccountMail;
@@ -53,6 +60,19 @@ type Options = {
 };
 type Auth = { user: UserRow; csrf: string; bearer: boolean };
 export function createApplication(options: Options) {
+  type Portal = "user" | "admin" | "provider" | "legacy";
+  const portals = new WeakMap<IncomingMessage, Portal>();
+  const portal = (req: IncomingMessage) => portals.get(req) || "legacy";
+  const cookieName = (req: IncomingMessage) =>
+    portal(req) === "legacy" ? "cm_session" : `cm_${portal(req)}_session`;
+  const sessionHash = (req: IncomingMessage, token: string) =>
+    digest(portal(req) === "legacy" ? token : `${portal(req)}:${token}`);
+  const publicOrigin = (req: IncomingMessage) =>
+    options.certificates?.origin(portal(req) === "legacy" ? "user" : portal(req) as "user"|"admin"|"provider") ||
+    (portal(req) === "admin" ? options.adminPublicOrigin : portal(req) === "provider" ? options.providerPublicOrigin : options.publicOrigin) ||
+    `http://${req.headers.host}`;
+  const secureCookie = (req: IncomingMessage) => options.secureCookie ||
+    !!options.certificates?.origin(portal(req) === "legacy" ? "user" : portal(req) as "user"|"admin"|"provider");
   const clientIp = clientIpResolver(options.trustedProxyIps);
   const store = new Store(options.databasePath),
     origins = new Set(options.allowedOrigins || []);
@@ -90,16 +110,18 @@ export function createApplication(options: Options) {
     const raw = req.headers.cookie
       ?.split(";")
       .map((v) => v.trim())
-      .find((v) => v.startsWith("cm_session="))
-      ?.slice(11);
+      .find((v) => v.startsWith(cookieName(req) + "="))
+      ?.slice(cookieName(req).length + 1);
     if (!raw || !/^[a-zA-Z0-9_-]{43}$/.test(raw)) return;
     const session = store.get<{ userId: string; csrf: string }>(
       "SELECT userId,csrf FROM sessions WHERE tokenHash=? AND expires>?",
-      digest(raw),
+      sessionHash(req, raw),
       Date.now(),
     );
     const user = session && store.user(session.userId);
-    return user ? { user, csrf: session!.csrf, bearer: false } : undefined;
+    return user && (portal(req) === "legacy" || user.role === portal(req))
+      ? { user, csrf: session!.csrf, bearer: false }
+      : undefined;
   }
   function authenticate(req: IncomingMessage, allowBearer = false): Auth {
     if (allowBearer && req.headers.authorization) {
@@ -113,7 +135,7 @@ export function createApplication(options: Options) {
           digest(token),
         );
       const user = key && store.user(key.userId);
-      check(user, "API Key 无效或已撤销。", 401, "unauthorized");
+      check(user && (portal(req) === "legacy" || user.role === "user"), "API Key 无效或已撤销。", 401, "unauthorized");
       return { user, csrf: "", bearer: true };
     }
     const auth = session(req);
@@ -148,22 +170,22 @@ export function createApplication(options: Options) {
     const previous = req.headers.cookie
       ?.split(";")
       .map((v) => v.trim())
-      .find((v) => v.startsWith("cm_session="))
-      ?.slice(11);
+      .find((v) => v.startsWith(cookieName(req) + "="))
+      ?.slice(cookieName(req).length + 1);
     if (previous)
-      store.run("DELETE FROM sessions WHERE tokenHash=?", digest(previous));
+      store.run("DELETE FROM sessions WHERE tokenHash=?", sessionHash(req, previous));
     const token = secret(),
       csrf = secret();
     store.run(
       "INSERT INTO sessions VALUES(?,?,?,?)",
-      digest(token),
+      sessionHash(req, token),
       user.id,
       csrf,
       Date.now() + 7 * 86400000,
     );
     res.setHeader(
       "Set-Cookie",
-      `cm_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${options.secureCookie ? "; Secure" : ""}`,
+      `${cookieName(req)}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secureCookie(req) ? "; Secure" : ""}`,
     );
     return csrf;
   }
@@ -305,7 +327,7 @@ export function createApplication(options: Options) {
       { field: "max_tokens", min: 1, max: model.maxOutputTokens },
     );
     const keyEnv = spec?.apiKeyEnv ?? model.apiKeyEnv;
-    const apiKey = keyEnv ? process.env[keyEnv] : undefined;
+    const apiKey = keyEnv ? deployment ? runtimeCredential(store,deployment.serverId,keyEnv) : process.env[keyEnv] : undefined;
     check(
       !keyEnv || apiKey,
       "模型服务密钥尚未配置。",
@@ -542,7 +564,8 @@ export function createApplication(options: Options) {
     if (streaming) finishStream(res, output as ChatResponse, modelId);
     else if (!res.destroyed) send(res, 200, output);
   }
-  const server = createServer(async (req, res) => {
+  async function handle(req: IncomingMessage, res: ServerResponse, audience: Portal) {
+    portals.set(req, audience);
     const requestId = randomUUID(),
       began = process.hrtime.bigint();
     res.setHeader("X-Request-ID", requestId);
@@ -573,6 +596,24 @@ export function createApplication(options: Options) {
     try {
       const path = new URL(req.url || "/", "http://localhost").pathname,
         method = req.method || "GET";
+      // Separate listeners enforce the audience; request headers cannot select it.
+      if (audience === "user")
+        check(!/^\/api\/(admin|provider)(?:\/|$)/.test(path), "Not found", 404, "not_found");
+      if (audience === "admin")
+        check(
+          /^\/api\/admin(?:\/|$)/.test(path) ||
+          ["/api/health", "/api/portal", "/api/state", "/api/auth/login", "/api/auth/logout", "/api/account/preferences"].includes(path),
+          "Not found", 404, "not_found",
+        );
+      if (audience === "provider")
+        check(/^\/api\/provider(?:\/|$)/.test(path) || ["/api/health","/api/portal","/api/state","/api/auth/login","/api/auth/register","/api/auth/logout","/api/account/preferences"].includes(path), "Not found",404,"not_found");
+      if (method === "GET" && path === "/api/portal") {
+        send(res, 200, {portal:audience, origin:options.certificates?.origin(audience === "legacy" ? "user" : audience)});
+        return;
+      }
+      if (path !== "/api/health" && options.certificates?.origin(audience === "legacy" ? "user" : audience))
+        check(req.headers["x-forwarded-proto"] === "https" && options.trustedProxyIps?.includes(req.socket.remoteAddress || ""),
+          "HTTPS is required", 426, "https_required");
       if (
         !["GET", "HEAD"].includes(method) &&
         path !== "/api/payments/webhook"
@@ -580,17 +621,31 @@ export function createApplication(options: Options) {
         const origin = req.headers.origin;
         check(
           !origin ||
-            origin === (options.publicOrigin || `http://${req.headers.host}`),
+            origin === publicOrigin(req),
           "不允许跨站请求。",
           403,
           "origin_rejected",
         );
+      }
+      if (path === "/api/admin/certificates" && method === "GET") {
+        admin(req);
+        send(res, 200, {available:!!options.certificates, data:options.certificates?.list() || []});
+        return;
+      }
+      const certificatePath = path.match(/^\/api\/admin\/certificates\/(user|admin|provider)$/);
+      if (certificatePath && method === "PUT") {
+        const actor = admin(req).user;
+        check(options.certificates, "Certificate management unavailable", 503, "certificate_unavailable");
+        const result = await track(options.certificates.save(certificatePath[1] as "user"|"admin"|"provider", await body(req), actor.id));
+        send(res, 200, {data:result});
+        return;
       }
       if (method === "POST" && path === "/api/payments/webhook") {
         await track(payments.webhook(req));
         send(res, 200, { ok: true });
         return;
       }
+      if (await handleProviders(req,res,path,method,{store,infrastructure,authenticate,admin,body,send})) return;
       if (method === "POST" && path === "/api/payments") {
         const { user } = authenticate(req),
           data = await body(req),
@@ -667,8 +722,13 @@ export function createApplication(options: Options) {
       }
       if (method === "GET" && path === "/api/state") {
         const auth = session(req);
+        const snapshot=store.snapshot(auth?.user,auth?.csrf);
+        if (audience==="provider") {
+          snapshot.models=[];
+          snapshot.servers=auth?.user.role==="provider"?ownedServers(store,infrastructure,auth.user.id):[];
+        }
         send(res, 200, {
-          ...store.snapshot(auth?.user, auth?.csrf),
+          ...snapshot,
           mailEnabled: !!options.mail,
           paymentsEnabled: !!options.stripe,
         });
@@ -701,12 +761,13 @@ export function createApplication(options: Options) {
             { field: "locale" },
           );
           store.limit(`mail:reset:${digest(address)}`, 3, 3600000);
-          const user = store.get<UserRow>(
+          const found = store.get<UserRow>(
             "SELECT * FROM users WHERE email=?",
             address,
           );
+          const user=found && store.user(found.id);
           // Respond identically before SMTP work to avoid revealing registered addresses.
-          if (user)
+          if (user && (audience === "legacy" || user.role === audience))
             void deliver(user, "reset", locale as Locale).catch(() =>
               console.error("Account reset email delivery failed"),
             );
@@ -714,7 +775,8 @@ export function createApplication(options: Options) {
           return;
         }
         const purpose = path.endsWith("reset-password") ? "reset" : "verify";
-        accountToken(store, data.token, purpose);
+        const candidate = accountToken(store, data.token, purpose);
+        check(audience === "legacy" || store.user(candidate.userId)?.role === audience, "Invalid or expired link", 400, "invalid_mail_token");
         const hash =
           purpose === "reset"
             ? await authHash(() => hashPassword(password(data.password)))
@@ -782,7 +844,7 @@ export function createApplication(options: Options) {
           address = clientIp(req),
           emailAddress = email(data.email),
           pass = password(data.password);
-        store.limit(`auth:${address}`, 20, 15 * 60_000);
+        store.limit(`auth:${audience === "legacy" ? "" : audience + ":"}${address}`, 20, 15 * 60_000);
         if (path.endsWith("register")) {
           const name = text(data.name, "name", 40);
           check(
@@ -799,22 +861,23 @@ export function createApplication(options: Options) {
               409,
               "email_exists",
             );
-            return store.createUser(name, emailAddress, hash);
+            return store.createUser(name, emailAddress, hash, audience === "provider" ? "provider" : "user");
           });
           send(res, 201, store.snapshot(user, setSession(req, res, user)));
           return;
         }
-        const user = store.get<UserRow>(
+        const found = store.get<UserRow>(
           "SELECT * FROM users WHERE email=?",
           emailAddress,
         );
+        const user = found && store.user(found.id);
         const valid = await authHash(() =>
           verifyPassword(
             pass,
             user?.passwordHash || `scrypt$${"0".repeat(32)}$${"0".repeat(128)}`,
           ),
         );
-        check(user && valid, "邮箱或密码错误。", 401, "invalid_credentials");
+        check(user && valid && (audience === "legacy" || user.role === audience), "邮箱或密码错误。", 401, "invalid_credentials");
         check(
           store.user(user.id)?.passwordHash === user.passwordHash,
           "邮箱或密码错误。",
@@ -833,7 +896,7 @@ export function createApplication(options: Options) {
         );
         res.setHeader(
           "Set-Cookie",
-          `cm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${options.secureCookie ? "; Secure" : ""}`,
+          `${cookieName(req)}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureCookie(req) ? "; Secure" : ""}`,
         );
         send(res, 200, { ok: true });
         return;
@@ -873,7 +936,7 @@ export function createApplication(options: Options) {
       if (method === "GET" && path === "/api/compute/offers") {
         authenticate(req);
         const control = new URL(
-            options.publicOrigin || `http://${req.headers.host}`,
+            publicOrigin(req),
           ),
           params = new URL(req.url!, "http://localhost").searchParams,
           hours = int(Number(params.get("hours") ?? 1), "hours", 1, 720),
@@ -896,7 +959,7 @@ export function createApplication(options: Options) {
         const { user } = authenticate(req),
           data = await body(req),
           control = new URL(
-            options.publicOrigin || `http://${req.headers.host}`,
+            publicOrigin(req),
           );
         send(res, 202, {
           reservation: infrastructure.billing.reservations.book(
@@ -945,7 +1008,7 @@ export function createApplication(options: Options) {
         const { user } = authenticate(req),
           data = await body(req),
           control = new URL(
-            options.publicOrigin || `http://${req.headers.host}`,
+            publicOrigin(req),
           );
         send(res, 202, {
           order: infrastructure.billing.purchase(
@@ -1011,10 +1074,10 @@ export function createApplication(options: Options) {
         );
         const endpoint = new URL(infrastructure.endpoint(d)),
           control = new URL(
-            options.publicOrigin || `http://${req.headers.host}`,
+            publicOrigin(req),
           ),
           spec = JSON.parse(d.spec),
-          key = process.env[spec.apiKeyEnv];
+          key = runtimeCredential(store,d.serverId,spec.apiKeyEnv);
         check(
           endpoint.hostname !== control.hostname,
           "Use an isolated workspace host",
@@ -1313,7 +1376,14 @@ export function createApplication(options: Options) {
         });
       }
     }
-  });
+  }
+  const server = createServer((req, res) => void handle(req, res, options.splitPortals ? "user" : "legacy"));
+  const adminServer = options.splitPortals
+    ? createServer((req, res) => void handle(req, res, "admin"))
+    : undefined;
+  const providerServer = options.splitPortals
+    ? createServer((req,res) => void handle(req,res,"provider"))
+    : undefined;
   let timer: ReturnType<typeof setInterval>,
     monitorTimer: ReturnType<typeof setInterval>;
   function checkOperations() {
@@ -1356,8 +1426,18 @@ export function createApplication(options: Options) {
   });
   server.requestTimeout = 90000;
   server.headersTimeout = 15000;
+  if (adminServer) {
+    adminServer.requestTimeout = server.requestTimeout;
+    adminServer.headersTimeout = server.headersTimeout;
+  }
+  if (providerServer) {
+    providerServer.requestTimeout = server.requestTimeout;
+    providerServer.headersTimeout = server.headersTimeout;
+  }
   return {
     server,
+    adminServer,
+    providerServer,
     store,
     operations,
     async drain() {

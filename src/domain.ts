@@ -3,7 +3,7 @@ export type User = {
   id: string;
   name: string;
   email: string;
-  role: "user" | "admin";
+  role: "user" | "admin" | "provider";
   locale: "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
   emailVerifiedAt: string | null;
 };
@@ -58,6 +58,7 @@ export type Server = {
   portStart: number;
   portEnd: number;
   schedulingEnabled: boolean;
+  requestedSchedulingEnabled?: boolean;
   maintenance: boolean;
   status: "pending" | "online" | "offline" | "disabled";
   lastHeartbeatAt: string | null;
@@ -70,6 +71,7 @@ export type Server = {
     workspaceReady?: boolean;
     expirySupported?: boolean;
     renewalSupported?: boolean;
+    nodeScopedKeys?: boolean;
   };
   gpus: Gpu[];
   allocatedGpuCount: number;
@@ -264,7 +266,7 @@ export type FinancialReport = {
   costRecorded: boolean;
   profit: number | null;
   daily: { day: string; revenue: number; cost: number }[];
-  byCategory: { category: Expense["category"]; amount: number }[];
+  byCategory: { category: Expense["category"] | "provider"; amount: number }[];
   expenses: Expense[];
   nextCursor: number | null;
 };
@@ -400,4 +402,18 @@ export type ErrorDetails = {
   availableCards?: number;
   requiredAmount?: number;
   availableAmount?: number;
+};
+
+export type Portal = "user" | "admin" | "provider";
+export type ProviderProfile = {userId:string;status:"pending"|"approved"|"suspended";ratePerGpuHour:number|null;updatedAt:string};
+export type ProviderBilling = {
+  summary:{gpuSeconds:number;earned:number;paid:number;available:number;pending:number};
+  earnings:{deploymentId:string;providerId:string;ratePerGpuHour:number;gpuCount:number;amount:number;resource:string;settlementId:string|null;startedAt:number;endedAt:number|null}[];
+  nextCursor:number|null;
+  settlements:{id:string;amount:number;reference:string;reason:string;createdAt:string}[];
+};
+export type ProviderAdmin = ProviderProfile & ProviderBilling & {name:string;email:string;servers:(Server & {approved:boolean})[]};
+export type CertificateInfo = {
+  portal: Portal; configured: boolean; origin?: string; subject?: string; issuer?: string;
+  validFrom?: string; validTo?: string; fingerprint?: string; updatedAt?: string; expired?: boolean;
 };

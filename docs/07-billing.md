@@ -1,5 +1,7 @@
 # CoreMatrix 计费与账本
 
+> v12 增量契约：三端入口与会话见 [22](22-portals-certificates.md)，供应商固定 GPU 卡时采购、数据表与接口见 [23](23-suppliers-procurement.md)。以增量章节替代旧入口和供应商范围。
+
 共享模型按实际输入和输出 Token 计费，独享算力按明确的资源时段计费。共享 Token 与 GPU 按卡时长账本，以及 Stripe 在线充值均已实现；商户收款与真实 GPU 验收仍待环境配置。
 
 ## 已实现的 Token 金额

@@ -6,6 +6,8 @@ import type { Infrastructure } from "./infrastructure.ts";
 import type { Order, RentalOffer } from "../src/domain.ts";
 import { Reservations, SETUP_MS } from "./reservations.ts";
 import type { Window } from "./reservations.ts";
+import { providerAllowed } from "./providers.ts";
+import { runtimeCredential, NODE_WORKSPACE_KEY } from "./node-credentials.ts";
 
 type Row = Omit<
   Order,
@@ -174,6 +176,7 @@ export class RentalBilling {
         );
         check(
           infra.online(n) &&
+            providerAllowed(this.store,n.id) &&
             !n.inventoryError &&
             !this.reservations.gpuIdentityConflict(n.id) &&
             caps.renewalSupported === true &&
@@ -332,8 +335,8 @@ export class RentalBilling {
         n.inventoryError ||
         host.hostname === controlHost ||
         (process.env.NODE_ENV === "production" && host.protocol !== "https:") ||
-        !process.env[caps.workspaceKeyEnv] ||
-        process.env[caps.workspaceKeyEnv]!.length < 32
+        !runtimeCredential(this.store,n.id,caps.nodeScopedKeys?NODE_WORKSPACE_KEY:caps.workspaceKeyEnv) ||
+        runtimeCredential(this.store,n.id,caps.nodeScopedKeys?NODE_WORKSPACE_KEY:caps.workspaceKeyEnv)!.length < 32
       )
         continue;
       if (this.reservations.availablePort(n, window) === null) continue;

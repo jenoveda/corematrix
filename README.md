@@ -1,6 +1,6 @@
 # CoreMatrix
 
-React + TypeScript 双端控制台，Node.js HTTP 后端，SQLite 持久化账户、会话、模型、计费账本、GPU 分配和部署任务。支持简体中文、英文、日文、韩文。
+React + TypeScript 用户、管理与供应商三端控制台，Node.js HTTP 后端，SQLite 持久化账户、会话、模型、计费账本、GPU 分配和部署任务。支持简体中文、英文、日文、韩文。
 
 ## 持续集成
 
@@ -17,9 +17,9 @@ React + TypeScript 双端控制台，Node.js HTTP 后端，SQLite 持久化账�
 
 ## Docker Compose 测试部署
 
-Linux 服务器安装 Docker Engine 与 Compose 插件 2.24+ 后，在项目根目录执行 `docker compose up -d --build --wait`，即可启动前后端。默认地址为 `http://服务器IP:8080`，数据库保存在独立 Docker 数据卷中，不读取本机 `.env` 或 `data/`。
+Linux 服务器安装 Docker Engine 与 Compose 插件 2.24+ 后，在项目根目录执行 `docker compose up -d --build --wait`，即可启动前后端。默认用户端 8080、管理端 8081、供应商端 8082，数据库保存在独立 Docker 数据卷中，不读取本机 `.env` 或 `data/`。
 
-端口、管理员初始化、升级和数据保留步骤见 [Compose 测试部署手册](docs/21-compose-testing.md)。此配置只用于可信测试网络的 HTTP 功能测试；HTTPS 生产部署继续使用 [生产部署说明](docs/20-production-deployment.md)。
+端口、管理员初始化、升级和数据保留步骤见 [Compose 测试部署手册](docs/21-compose-testing.md)。首次 HTTP 配置限可信测试网络或 SSH 隧道。管理端可上传三端证书和私钥，分别启用 HTTPS 443/8443/8444，见 [身份隔离与证书](docs/22-portals-certificates.md)。外置代理生产部署见 [生产部署说明](docs/20-production-deployment.md)。
 
 ## 本地启动
 
@@ -31,11 +31,14 @@ cp .env.example .env
 npm run dev
 ```
 
-一条命令启动 API（默认 3001）和 Vite（默认 5173）。打开终端打印的 Vite 地址：
+一条命令启动三个独立页面入口与 API（loopback 3001/3002/3003）：
 
-- 用户端：`/#/user/models`
-- 注册 / 登录：`/#/user/account`
-- 管理端：`/#/admin/overview`（需要管理员登录）
+- 用户端：[5173](http://127.0.0.1:5173/#/user/models)
+- 用户注册登录：[账户](http://127.0.0.1:5173/#/user/account)
+- 管理端：[5174](http://127.0.0.1:5174/#/admin/overview)，仅管理员可登录，不开放注册。
+- 供应商端：[5175](http://127.0.0.1:5175/#/provider/overview)，独立注册登录、节点管理及采购账单。
+
+三端身份和会话独立。构建输出为 `dist/user`、`dist/admin`、`dist/provider`，部署时分别代理到对应 API。
 
 普通注册账户的余额为 **0**、角色为普通用户。所有数据保存在 `data/corematrix.sqlite`；前端不再读取旧演示 localStorage。旧浏览器模拟数据不会导入真实账本。
 
@@ -47,7 +50,7 @@ npm run dev
 npm run create-admin
 ```
 
-命令不输出密码；邮箱已存在时不会覆盖密码或把普通用户升级为管理员。创建后移除 `.env` 中的 `ADMIN_PASSWORD`，用配置的邮箱和密码在账户页面登录。没有内置通用账号或默认密码。
+命令不输出密码；邮箱已存在时不会覆盖密码或把普通用户升级为管理员。创建后移除 `.env` 中的 `ADMIN_PASSWORD`，用配置的邮箱和密码在管理端登录。没有内置通用账号或默认密码。
 
 Stripe 在线充值已实现，配置完成后可在用户钱包创建支付单，签名回调确认后到账，支持退款、失败恢复及拒付资金处理。配置与边界见 [Stripe 支付](docs/16-stripe-payments.md)。管理员仍可在“模型与定价 → 用户资金入账”按已确认的线下款项或授信，为已注册用户入账。操作保存管理员 ID、金额、说明与唯一编号；重复编号不会重复增加余额。
 
@@ -191,3 +194,7 @@ npm run db:verify -- data/recovery-check/corematrix.sqlite
 有 Docker、Go 与 OpenSSL 时，可按 [固定镜像检查步骤](docs/20-production-deployment.md#可复现的-nginx-模板语法检查) 运行 `npm run test:nginx`，在无网络 Linux 容器中检查两份模板语法和实际 HTTPS/ACL/SSE/WebSocket 传输。该命令不读取业务配置、不发布端口；实际模型、Jupyter 和生产验收仍需部署环境。
 
 可按 [Linux 服务检查步骤](docs/20-production-deployment.md#可复现的-linux-服务与运行检查) 构建独立验收工具镜像并运行 `npm run test:linux`。它验证 API unit、真实非 root API、管理员初始化与重启，以及 Linux Agent/Node 测试；不挂载实际数据、不启动主机系统服务。
+
+## 第三方 GPU 供应商
+
+供应商通过独立入口登记节点，平台审核账户、固定 GPU 卡时采购价和实际 GPU 清单后销售，支持 Token 推理与按卡出租。平台独立定价，采购在部署健康就绪后计时，确认回收后结束；运行预估、已关闭应付款与线下已付结算分别展示，并自动归入平台成本。供应商节点须启用 `COREMATRIX_NODE_SCOPED_KEYS=1`，使用节点独立密钥。详见 [供应商采购与结算](docs/23-suppliers-procurement.md)。

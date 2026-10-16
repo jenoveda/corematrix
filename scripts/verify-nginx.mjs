@@ -52,7 +52,15 @@ try {
     )
       .replaceAll("/etc/corematrix/tls/fullchain.pem", "/qa/cert.pem")
       .replaceAll("/etc/corematrix/tls/privkey.pem", "/qa/key.pem")
-      .replaceAll("/opt/corematrix/current/dist", "/qa/www"),
+      .replaceAll("/opt/corematrix/current/dist/user", "/qa/www"),
+    admin: readFileSync(join(root, "deploy/nginx-admin.conf.example"), "utf8")
+      .replaceAll("/etc/corematrix/admin-tls/fullchain.pem", "/qa/cert.pem")
+      .replaceAll("/etc/corematrix/admin-tls/privkey.pem", "/qa/key.pem")
+      .replaceAll("/opt/corematrix/current/dist/admin", "/qa/www"),
+    provider: readFileSync(join(root, "deploy/nginx-provider.conf.example"), "utf8")
+      .replaceAll("/etc/corematrix/provider-tls/fullchain.pem", "/qa/cert.pem")
+      .replaceAll("/etc/corematrix/provider-tls/privkey.pem", "/qa/key.pem")
+      .replaceAll("/opt/corematrix/current/dist/provider", "/qa/www"),
     node: readFileSync(join(root, "deploy/nginx-node.conf.example"), "utf8")
       .replaceAll("NODE_IP", "127.0.0.2")
       .replaceAll("CONTROL_PLANE_IP", "127.0.0.3")

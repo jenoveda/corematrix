@@ -176,7 +176,7 @@ export class Store {
     }
   }
   user(id: string) {
-    return this.get<UserRow>("SELECT * FROM users WHERE id=?", id);
+    return this.get<UserRow>("SELECT users.*,CASE WHEN accountType='provider' THEN 'provider' ELSE role END AS role FROM users WHERE id=?", id);
   }
   createUser(
     name: string,
@@ -186,14 +186,16 @@ export class Store {
   ) {
     const id = randomUUID();
     this.run(
-      "INSERT INTO users(id,name,email,role,passwordHash,createdAt) VALUES(?,?,?,?,?,?)",
+      "INSERT INTO users(id,name,email,role,passwordHash,createdAt,accountType) VALUES(?,?,?,?,?,?,?)",
       id,
       name,
       email,
-      role,
+      role === "provider" ? "user" : role,
       passwordHash,
       new Date().toISOString(),
+      role === "provider" ? "provider" : "user",
     );
+    if (role === "provider") this.run("INSERT INTO providers(userId,updatedAt) VALUES(?,?)",id,new Date().toISOString());
     return this.user(id)!;
   }
   model(id: string) {

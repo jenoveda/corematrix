@@ -1,5 +1,7 @@
 # CoreMatrix Go 节点 Agent
 
+供应商节点使用 5-go：设置 `COREMATRIX_NODE_SCOPED_KEYS=1`，`COREMATRIX_URL` 指向用户端控制面的 HTTPS origin（Compose 默认 443），不要填写供应商端 8444。Agent 首次认证心跳校验并安装本节点推理/Jupyter 独立密钥后才可领取任务，无需配置平台共享运行密钥。轮换 Agent Token 保留运行密钥和工作区。旧自有节点可继续使用 4-go（该变量留空/0），供应商必须升级才能审核。见 [供应商采购与接入](../docs/23-suppliers-procurement.md)。
+
 Agent 已迁移为 **Go 1.24+ 标准库实现**，发布 Linux amd64 / arm64 静态二进制；节点无需安装 Go 或 Python 来运行 Agent。Jupyter 容器内仍需 Python、JupyterLab 及所需 GPU 框架。
 
 同一二进制支持两种节点工作模式：

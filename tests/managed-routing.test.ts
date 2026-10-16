@@ -8,6 +8,8 @@ import { createApplication } from "../server/app.ts";
 import { Infrastructure } from "../server/infrastructure.ts";
 import { digest, secret } from "../server/auth.ts";
 import { reconcile } from "../server/finance.ts";
+import { providerReport, startProcurement, stopProcurement, procurementCosts } from "../server/providers.ts";
+import { NODE_INFERENCE_KEY, runtimeCredential } from "../server/node-credentials.ts";
 
 async function until(condition: () => boolean) {
   const deadline = Date.now() + 5000;
@@ -18,7 +20,7 @@ async function until(condition: () => boolean) {
 }
 async function fixture(t: any) {
   const peers = ["a", "b"].map((name) => {
-    const calls: { text: string; res: ServerResponse }[] = [];
+    const calls: { text: string; res: ServerResponse; authorization:string }[] = [];
     const server = createServer(async (req, res) => {
       res.setHeader("Content-Type", "application/json");
       if (req.method === "GET") {
@@ -28,7 +30,7 @@ async function fixture(t: any) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString());
-      calls.push({ text: body.messages[0].content, res });
+      calls.push({ text: body.messages[0].content, res, authorization:req.headers.authorization || "" });
     });
     return {
       name,
@@ -203,6 +205,35 @@ async function fixture(t: any) {
   }
   return { app, s, infra, user, model, peers, ids, chat, pending };
 }
+
+test("supplier Token routing uses its own key while GPU-time costs are independent of usage or failed requests",async t=>{
+  const f=await fixture(t),provider=f.s.createUser("Supplier","supplier-token@tests.invalid","unused","provider"),seed=secret();
+  f.s.run("UPDATE providers SET status='approved',ratePerGpuHour=3600000 WHERE userId=?",provider.id);
+  f.s.run("UPDATE servers SET credentialSeed=?,capabilities=json_set(capabilities,'$.nodeScopedKeys',json('true')) WHERE id='a'",seed);
+  f.s.run("UPDATE deployments SET spec=json_set(spec,'$.apiKeyEnv',?) WHERE id=?",NODE_INFERENCE_KEY,f.ids[0]);
+  f.s.run("INSERT INTO provider_nodes(serverId,providerId,approved) VALUES('a',?,1)",provider.id);
+  startProcurement(f.s,f.ids[0]);startProcurement(f.s,f.ids[0]);
+  f.s.run("UPDATE provider_usage SET startedAt=?",Date.now()-3600000);
+  assert(providerReport(f.s,provider.id).summary.pending>=3600000);
+  const key=randomUUID(),pending=f.chat("supplier",key);
+  await until(()=>f.peers[0].calls.some(c=>c.text==="supplier"));
+  assert.equal(f.peers[0].calls[0].authorization,"Bearer "+runtimeCredential(f.s,"a",NODE_INFERENCE_KEY));
+  f.s.run("UPDATE providers SET ratePerGpuHour=9000000 WHERE userId=?",provider.id);
+  f.peers[0].finish("supplier");assert.equal((await pending).status,200);
+  assert.equal((await f.chat("supplier",key)).status,200);
+  const failed=f.chat("failed-supplier");await until(()=>f.peers[0].calls.some(c=>c.text==="failed-supplier"));f.peers[0].finish("failed-supplier",false);assert.equal((await failed).status,502);
+  f.s.run("UPDATE gpu_allocations SET released=1 WHERE deploymentId=?",f.ids[0]);
+  stopProcurement(f.s,f.ids[0]);stopProcurement(f.s,f.ids[0]);
+  const report=providerReport(f.s,provider.id);
+  assert.equal(report.earnings.length,1);assert.equal(report.earnings[0].ratePerGpuHour,3600000);
+  assert(report.summary.available>=3600000);
+  assert(!JSON.stringify(f.infra.server(f.infra.node("a"))).includes(seed));
+  assert.equal(reconcile(f.s).healthy,true);
+  f.s.run("UPDATE provider_usage SET startedAt=?,endedAt=?,amount=2000",Date.parse("2026-10-15T23:59:59+08:00"),Date.parse("2026-10-16T00:00:01+08:00"));
+  const previous=procurementCosts(f.s,"2026-10-15","2026-10-15"),next=procurementCosts(f.s,"2026-10-16","2026-10-16");
+  assert.equal(previous.cost,1000);assert.equal(next.cost,1000);
+  assert.equal(procurementCosts(f.s,"2026-10-15","2026-10-16").cost,previous.cost+next.cost);
+});
 
 test("duplicate legacy physical claims quarantine inference routing and audit without releasing either claim", async (t) => {
   const f = await fixture(t);

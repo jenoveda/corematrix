@@ -18,6 +18,8 @@ import {
 import InfrastructurePages from "./InfrastructurePages";
 import Operations from "../Operations";
 import { PaymentOrders } from "../Payments";
+import Certificates from "../Certificates";
+import { AdminProviders } from "../Providers";
 function Overview() {
   const { state, open, refresh, notify } = useApp(),
     { t, money, number, status } = useI18n(),
@@ -516,6 +518,8 @@ function Reports() {
   );
 }
 export default function AdminPages({ page }: { page: string }) {
+  if (page === "providers") return <AdminProviders />;
+  if (page === "certificates") return <Certificates />;
   if (page === "operations") return <Operations />;
   if (page === "pricing") return <Pricing />;
   if (page === "reports") return <Reports />;

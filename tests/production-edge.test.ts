@@ -68,13 +68,21 @@ test("deployment examples agree on the public origin, API port, release path and
     writePath = unit.match(/^ReadWritePaths=(.+)$/m)![1];
   assert.equal(config.secureCookie, true);
   assert(config.databasePath.startsWith(writePath + "/"));
-  assert(nginx.includes("root " + working + "/dist;"));
+  assert(nginx.includes("root " + working + "/dist/user;"));
   assert(nginx.includes("http://127.0.0.1:" + config.port + ";"));
   assert(
     nginx.includes(
       "server_name " + new URL(config.publicOrigin!).hostname + ";",
     ),
   );
+  for(const portal of ["admin","provider"]){
+    const prefix=portal.toUpperCase(),origin=new URL(env[prefix+"_PUBLIC_ORIGIN"]!);
+    const proxy=readFileSync(`deploy/nginx-${portal}.conf.example`,"utf8");
+    assert(proxy.includes(`root ${working}/dist/${portal};`));
+    assert(proxy.includes(`http://127.0.0.1:${env[prefix+"_API_PORT"]};`));
+    assert(proxy.includes(`server_name ${origin.hostname};`));
+    assert(proxy.includes(`listen ${origin.port || 443} ssl;`));
+  }
 });
 
 test("API works behind a certificate-verified TLS edge with Secure cookies, origin checks, cleaned forwarding and incremental SSE", async (t) => {

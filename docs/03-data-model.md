@@ -1,5 +1,7 @@
 # CoreMatrix 数据库设计
 
+> v12 增量契约：三端入口与会话见 [22](22-portals-certificates.md)，供应商固定 GPU 卡时采购、数据表与接口见 [23](23-suppliers-procurement.md)。以增量章节替代旧入口和供应商范围。
+
 已有账户与账本继续保留，节点管理采用增量迁移。版本 1 已迁移 locale / ledger metadata，版本 2 已迁移节点、GPU、部署、任务和占用表；版本 3 增加双模式和出租使用者字段。物理列以 `server/migrations.ts` 为准，下面节点表的字段清单表示 API 领域投影。
 
 ## 通用规则

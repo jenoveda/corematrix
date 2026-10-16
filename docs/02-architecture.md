@@ -1,5 +1,7 @@
 # CoreMatrix 系统架构
 
+> v12 增量契约：三端独立入口与会话见 [22](22-portals-certificates.md)，供应商固定 GPU 卡时采购、数据库与接口见 [23](23-suppliers-procurement.md)。以增量章节替代本文涉及的旧入口和供应商范围。
+
 现阶段保留一个 React 应用、一个 Node.js API 进程和 SQLite。GPU 主机运行本项目的轻量 Go Agent，通过拉取任务管理 Docker 模型容器，避免让管理端直接执行 SSH 或任意 Shell。
 
 ## 当前代码结构

@@ -1,8 +1,8 @@
 # CoreMatrix 开发文档
 
-CoreMatrix 为共享大模型提供按 Token 计费的访问服务，并统一管理自有 GPU 服务器、模型部署和独享算力订单。这套文档面向产品、前端、后端、节点 Agent 和测试开发，作为后续实现与验收的共同依据。
+CoreMatrix 为共享大模型提供按 Token 计费的访问服务，并统一管理自有及供应商 GPU 服务器、模型部署和独享算力订单。这套文档面向产品、前端、后端、节点 Agent 和测试开发，作为后续实现与验收的共同依据。
 
-文档基线日期为 **2026 年 10 月 15 日，UTC+8**。产品界面以已确认的双端原型为基础；已实现能力以当前项目源码为准。用户已确认节点环境采用 **Linux、NVIDIA GPU 和 Docker**。
+文档基线日期为 **2026 年 10 月 16 日，UTC+8**。产品界面以已确认的三端入口需求与原型为基础；已实现能力以当前项目源码为准。用户已确认节点环境采用 **Linux、NVIDIA GPU 和 Docker**。
 
 本阶段结果见 [实现与验证记录](11-implementation-status.md)，Go Agent 支持推理与按卡出租（JupyterLab）两种模式；GPU 订单、余额计费、续费退租和到期回收已实现，见 [GPU 购买与计费](12-gpu-rental-billing.md)。节点部署步骤见 [Agent 接入手册](../agent/README.md)。
 
@@ -13,6 +13,8 @@ GPU 未来预约、资源计划与延迟计费见 [预约契约](17-gpu-reservat
 完整的新增业务契约：[GPU 购买与计费](12-gpu-rental-billing.md)、[流式推理与计费](14-streaming-billing.md)。
 
 Linux 一键启动前后端与独立测试数据卷见 [Docker Compose 测试部署](21-compose-testing.md)。
+
+三端独立入口与管理后台上传 HTTPS 证书见 [身份隔离与证书](22-portals-certificates.md)；第三方供应商接入、两种销售方式、固定采购卡时与结算见 [供应商采购](23-suppliers-procurement.md)。这两章替代旧文档中同入口登录和供应商未实现的描述。
 
 ## 阅读顺序
 

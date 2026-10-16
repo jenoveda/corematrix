@@ -12,3 +12,4 @@ __pycache__/
 agent/agent.env
 
 agent/bin/
+platform-tls.json*

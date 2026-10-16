@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-export const LATEST_SCHEMA_VERSION = 11;
+export const LATEST_SCHEMA_VERSION = 12;
 export function migrate(db: DatabaseSync) {
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,appliedAt TEXT NOT NULL)",
@@ -227,5 +227,23 @@ export function migrate(db: DatabaseSync) {
       db.exec("ROLLBACK");
       throw e;
     }
+  }
+  if (!db.prepare("SELECT version FROM schema_migrations WHERE version=12").get()) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN accountType TEXT NOT NULL DEFAULT 'user' CHECK(accountType IN ('user','provider'));
+        ALTER TABLE servers ADD COLUMN credentialSeed TEXT;
+        CREATE TABLE providers(userId TEXT PRIMARY KEY REFERENCES users(id),status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','suspended')),ratePerGpuHour INTEGER CHECK(ratePerGpuHour BETWEEN 0 AND 100000000000),reviewedBy TEXT REFERENCES users(id),updatedAt TEXT NOT NULL);
+        CREATE TABLE provider_nodes(serverId TEXT PRIMARY KEY REFERENCES servers(id),providerId TEXT NOT NULL REFERENCES providers(userId),approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)),reviewedGpuUuids TEXT NOT NULL DEFAULT '[]');
+        CREATE INDEX provider_nodes_owner ON provider_nodes(providerId);
+        CREATE INDEX gpus_uuid ON gpus(uuid);
+        CREATE TABLE provider_settlements(id TEXT PRIMARY KEY,providerId TEXT NOT NULL REFERENCES providers(userId),amount INTEGER NOT NULL CHECK(amount>0),reference TEXT NOT NULL UNIQUE,reason TEXT NOT NULL,actorId TEXT NOT NULL REFERENCES users(id),createdAt TEXT NOT NULL);
+        CREATE TABLE provider_usage(deploymentId TEXT PRIMARY KEY REFERENCES deployments(id),providerId TEXT NOT NULL REFERENCES providers(userId),ratePerGpuHour INTEGER NOT NULL CHECK(ratePerGpuHour BETWEEN 0 AND 100000000000),gpuCount INTEGER NOT NULL CHECK(gpuCount BETWEEN 1 AND 64),resource TEXT NOT NULL,startedAt INTEGER NOT NULL,endedAt INTEGER CHECK(endedAt>=startedAt),amount INTEGER CHECK(amount>=0),settlementId TEXT REFERENCES provider_settlements(id),CHECK((endedAt IS NULL AND amount IS NULL AND settlementId IS NULL) OR (endedAt IS NOT NULL AND amount IS NOT NULL)));
+        CREATE INDEX provider_usage_owner ON provider_usage(providerId,settlementId);
+      `);
+      db.prepare("INSERT INTO schema_migrations VALUES(12,?)").run(new Date().toISOString());
+      db.exec("COMMIT");
+    } catch(error) { db.exec("ROLLBACK"); throw error; }
   }
 }

@@ -3,6 +3,7 @@ import { check, int, requestKey, text } from "./validation.ts";
 import type { Store } from "./store.ts";
 import type { Expense, FinancialReport } from "../src/domain.ts";
 import { CLEANUP_MS } from "./reservations.ts";
+import { procurementCosts, procurementAmount } from "./providers.ts";
 export const expenseCategories = [
   "equipment",
   "electricity",
@@ -141,6 +142,8 @@ export function financeReport(
     from,
     to,
   )!;
+  const supplier=procurementCosts(s,from,to);
+  costs.cost+=supplier.cost; costs.count+=supplier.count;
   const rows = s.all<Expense & { cursor: number }>(
       "SELECT rowid cursor,* FROM expenses WHERE day BETWEEN ? AND ? AND rowid<? ORDER BY rowid DESC LIMIT 51",
       from,
@@ -156,6 +159,13 @@ export function financeReport(
     from,
     to,
   );
+  for(const row of supplier.daily){
+    const existing=daily.find(d=>d.day===row.day);
+    if(existing) existing.cost+=row.cost; else daily.push({...row,revenue:0});
+  }
+  daily.sort((a,b)=>a.day.localeCompare(b.day));
+  const byCategory=s.all<FinancialReport["byCategory"][number]>("SELECT category,SUM(amount) amount FROM expenses WHERE day BETWEEN ? AND ? AND voidedAt IS NULL GROUP BY category ORDER BY amount DESC",from,to);
+  if(supplier.count) byCategory.push({category:"provider",amount:supplier.cost});
   return {
     from,
     to,
@@ -169,11 +179,7 @@ export function financeReport(
     costRecorded: costs.count > 0,
     profit: costs.count ? revenues.revenue - costs.cost : null,
     daily,
-    byCategory: s.all(
-      "SELECT category,SUM(amount) amount FROM expenses WHERE day BETWEEN ? AND ? AND voidedAt IS NULL GROUP BY category ORDER BY amount DESC",
-      from,
-      to,
-    ),
+    byCategory,
     expenses: expenses.map(({ cursor: _, ...r }) => r),
     nextCursor: hasMore ? expenses.at(-1)!.cursor : null,
   };
@@ -346,6 +352,14 @@ export function reconcile(s: Store) {
       expected: 1,
       actual: g.actual,
     });
+  for(const usage of s.all<{deploymentId:string;startedAt:number;endedAt:number|null;amount:number|null;ratePerGpuHour:number;gpuCount:number}>("SELECT * FROM provider_usage WHERE endedAt IS NOT NULL")) {
+    const expected=procurementAmount(usage,usage.endedAt!);
+    if(usage.amount!==expected) issues.push({code:"provider_procurement_amount",entityId:usage.deploymentId,expected,actual:usage.amount??0});
+    if(s.get("SELECT 1 FROM gpu_allocations WHERE deploymentId=? AND released=0",usage.deploymentId)) issues.push({code:"provider_procurement_cleanup",entityId:usage.deploymentId,expected:0,actual:1});
+  }
+  for(const row of s.all<{id:string;amount:number;actual:number}>("SELECT p.id,p.amount,COALESCE(SUM(u.amount),0) actual FROM provider_settlements p LEFT JOIN provider_usage u ON u.settlementId=p.id AND u.providerId=p.providerId GROUP BY p.id")) {
+    if(row.amount!==row.actual) issues.push({code:"provider_settlement_amount",entityId:row.id,expected:row.amount,actual:row.actual});
+  }
   return {
     checkedAt: new Date().toISOString(),
     healthy: issues.length === 0,

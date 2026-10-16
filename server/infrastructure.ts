@@ -6,11 +6,14 @@ import type { Server, Deployment, Gpu, Model } from "../src/domain.ts";
 import type { Store } from "./store.ts";
 import { digest, secret } from "./auth.ts";
 import { check, int, text, object, requestKey } from "./validation.ts";
+import { providerAllowed, startProcurement, stopProcurement } from "./providers.ts";
+import { nodeCredentials, runtimeCredential, NODE_INFERENCE_KEY, NODE_WORKSPACE_KEY } from "./node-credentials.ts";
 
 type NodeRow = {
   id: string;
   data: string;
   tokenHash: string;
+  credentialSeed: string|null;
   instanceId: string | null;
   bootId: string | null;
   generation: number;
@@ -100,6 +103,8 @@ export class Infrastructure {
       caps = JSON.parse(n.capabilities),
       online = this.online(n),
       identityConflict = this.billing.reservations.gpuIdentityConflict(n.id);
+    const requestedSchedulingEnabled = data.schedulingEnabled;
+    data.schedulingEnabled = data.schedulingEnabled && providerAllowed(this.store,n.id);
     const gpus = this.store
       .all<{ data: string; missing: number; allocated: number }>(
         "SELECT g.data,g.missing,EXISTS(SELECT 1 FROM gpu_allocations a WHERE a.serverId=g.serverId AND a.uuid=g.uuid AND a.released=0) allocated FROM gpus g WHERE serverId=? ORDER BY rowid",
@@ -113,6 +118,7 @@ export class Infrastructure {
       })) as Gpu[];
     return {
       ...data,
+      requestedSchedulingEnabled,
       workMode: data.workMode ?? "inference",
       rentalSalesEnabled: data.rentalSalesEnabled ?? false,
       hourlyPrice: data.hourlyPrice ?? 0,
@@ -140,6 +146,7 @@ export class Infrastructure {
         workspaceReady: caps.workspaceReady,
         expirySupported: caps.expirySupported,
         renewalSupported: caps.renewalSupported,
+        nodeScopedKeys: caps.nodeScopedKeys,
       },
       gpus,
       allocatedGpuCount: gpus.filter((g) => g.allocated).length,
@@ -228,6 +235,7 @@ export class Infrastructure {
         return (
           this.online(n) &&
           JSON.parse(n.data).schedulingEnabled &&
+          providerAllowed(this.store,n.id) &&
           (JSON.parse(n.data).workMode ?? "inference") === "inference" &&
           !n.inventoryError &&
           !this.billing.reservations.gpuIdentityConflict(n.id)
@@ -490,14 +498,14 @@ export class Infrastructure {
     const imageDigest = rental
       ? caps.workspaceImageDigest
       : caps.runtimeImageDigest;
-    const apiKeyEnv = rental
+    const apiKeyEnv = caps.nodeScopedKeys===true ? (rental?NODE_WORKSPACE_KEY:NODE_INFERENCE_KEY) : rental
       ? text(caps.workspaceKeyEnv, "workspace key name", 80)
       : model.apiKeyEnv || "";
     check(
       !rental ||
         (/^INFERENCE_[A-Z0-9_]+$/.test(apiKeyEnv) &&
-          !!process.env[apiKeyEnv] &&
-          process.env[apiKeyEnv]!.length >= 32),
+          !!runtimeCredential(this.store,n.id,apiKeyEnv) &&
+          runtimeCredential(this.store,n.id,apiKeyEnv)!.length >= 32),
       "Workspace key missing",
       400,
       "model_runtime_missing",
@@ -524,7 +532,7 @@ export class Infrastructure {
       "model_runtime_missing",
     );
     check(
-      !model.apiKeyEnv || process.env[model.apiKeyEnv],
+      !apiKeyEnv || runtimeCredential(this.store,n.id,apiKeyEnv),
       "Inference key missing",
       400,
       "model_runtime_missing",
@@ -722,6 +730,7 @@ export class Infrastructure {
             serverTime: new Date().toISOString(),
             heartbeatSeconds: 10,
             rentalDeadlines: this.billing.deadlines(n.id),
+            ...(JSON.parse(n.capabilities).nodeScopedKeys && n.credentialSeed ? {credentials:nodeCredentials(n.credentialSeed)} : {}),
           };
         check(
           sequence > n.sequence,
@@ -736,12 +745,17 @@ export class Infrastructure {
             ? null
             : text(data.inventoryError, "inventory error", 2000),
         containers = data.containers;
+      if (caps.nodeScopedKeys===true) {
+        caps.workspaceKeyEnv=NODE_WORKSPACE_KEY;
+        if(!n.credentialSeed) this.store.run("UPDATE servers SET credentialSeed=? WHERE id=?",secret(),n.id);
+      }
       check(typeof caps.dockerReady === "boolean", "Invalid Docker readiness");
       for (const flag of [
         "inferenceReady",
         "workspaceReady",
         "expirySupported",
         "renewalSupported",
+        "nodeScopedKeys",
       ])
         check(
           caps[flag] === undefined || typeof caps[flag] === "boolean",
@@ -821,6 +835,9 @@ export class Infrastructure {
             JSON.stringify(gpu),
           );
         }
+        const reviewed=this.store.get<{approved:number;reviewedGpuUuids:string}>("SELECT approved,reviewedGpuUuids FROM provider_nodes WHERE serverId=?",n.id);
+        if(reviewed?.approved && reviewed.reviewedGpuUuids!==JSON.stringify([...uuids].sort()))
+          this.store.run("UPDATE provider_nodes SET approved=0 WHERE serverId=?",n.id);
       }
       if (generation !== n.generation)
         this.store.run(
@@ -877,6 +894,7 @@ export class Infrastructure {
         serverTime: new Date().toISOString(),
         heartbeatSeconds: 10,
         rentalDeadlines: this.billing.deadlines(n.id),
+        ...(caps.nodeScopedKeys===true ? {credentials:nodeCredentials(this.node(n.id).credentialSeed!)} : {}),
       };
     });
   }
@@ -1010,6 +1028,7 @@ export class Infrastructure {
           d.id,
         );
         this.billing.stopped(d.id);
+        stopProcurement(this.store,d.id);
         this.store.run(
           "UPDATE port_allocations SET released=1 WHERE deploymentId=?",
           d.id,
@@ -1067,7 +1086,7 @@ export class Infrastructure {
         headers = {
           "Content-Type": "application/json",
           ...(spec.apiKeyEnv
-            ? { Authorization: `Bearer ${process.env[spec.apiKeyEnv] || ""}` }
+            ? { Authorization: `Bearer ${runtimeCredential(this.store,d.serverId,spec.apiKeyEnv) || ""}` }
             : {}),
         };
       const node = this.node(d.serverId);
@@ -1095,7 +1114,7 @@ export class Infrastructure {
             )
           : undefined;
       if (d.workloadType === "gpu-rental") {
-        const key = process.env[spec.apiKeyEnv];
+        const key = runtimeCredential(this.store,d.serverId,spec.apiKeyEnv);
         check(key, "Workspace key missing");
         const r = await fetch(
           base + `/api/compute/rentals/${id}/lab/api/status`,
@@ -1188,6 +1207,7 @@ export class Infrastructure {
           );
         }
         if (!this.billing.activate(id)) return;
+        startProcurement(this.store,id);
         this.store.run(
           "UPDATE deployments SET phase='ready',healthAt=?,lastError=NULL WHERE id=?",
           Date.now(),
@@ -1230,6 +1250,28 @@ export class Infrastructure {
       Date.now() - 20 * 60_000,
     ))
       this.stop(d.id, true);
+  }
+  createNode(raw: Record<string, unknown>) {
+    const data = this.validateNode(raw), id = randomUUID(), token = "node_" + secret();
+    this.store.run("INSERT INTO servers(id,data,tokenHash,credentialSeed) VALUES(?,?,?,?)",id,JSON.stringify(data),digest(token),secret());
+    return {server:this.server(this.node(id)),agentToken:token};
+  }
+  updateNode(id: string, raw: Record<string,unknown>) {
+    const n=this.node(id), data=this.validateNode(raw), old=JSON.parse(n.data);
+    check(!this.busy(id) || (old.inferenceHost===data.inferenceHost && old.portStart===data.portStart && old.portEnd===data.portEnd && (old.workMode??"inference")===data.workMode),"Node in use",409,"server_in_use");
+    this.store.run("UPDATE servers SET data=? WHERE id=?",JSON.stringify(data),id);
+    return {server:this.server(this.node(id))};
+  }
+  rotateNodeToken(id: string) {
+    this.node(id);
+    const token="node_"+secret();
+    this.store.run("UPDATE rental_orders SET expiryAcknowledgedAt=NULL WHERE deploymentId IN (SELECT id FROM deployments WHERE serverId=?)",id);
+    this.store.run("UPDATE servers SET tokenHash=?,instanceId=NULL,bootId=NULL,lastHeartbeat=NULL,generation=generation+1,sequence=-1 WHERE id=?",digest(token),id);
+    return {agentToken:token};
+  }
+  deleteNode(id: string) {
+    this.node(id); check(!this.busy(id),"Node in use",409,"server_in_use");
+    this.store.run("UPDATE servers SET deleted=1 WHERE id=?",id); return {ok:true};
   }
   async handle(
     req: IncomingMessage,
@@ -1287,16 +1329,7 @@ export class Infrastructure {
     if (kind === "servers") {
       if (!id && method === "GET") result = { data: this.servers() };
       else if (!id && method === "POST") {
-        const data = this.validateNode(await h.body(req)),
-          id = randomUUID(),
-          token = "node_" + secret();
-        this.store.run(
-          "INSERT INTO servers(id,data,tokenHash) VALUES(?,?,?)",
-          id,
-          JSON.stringify(data),
-          digest(token),
-        );
-        result = { server: this.server(this.node(id)), agentToken: token };
+        result = this.createNode(await h.body(req));
         status = 201;
       } else {
         const n = this.node(id);
@@ -1306,41 +1339,12 @@ export class Infrastructure {
             deployments: this.deployments(id),
           };
         else if (method === "PUT") {
-          const data = this.validateNode(await h.body(req)),
-            old = JSON.parse(n.data);
-          check(
-            !this.busy(id) ||
-              (old.inferenceHost === data.inferenceHost &&
-                old.portStart === data.portStart &&
-                old.portEnd === data.portEnd &&
-                (old.workMode ?? "inference") === data.workMode),
-            "Node in use",
-            409,
-            "server_in_use",
-          );
-          this.store.run(
-            "UPDATE servers SET data=? WHERE id=?",
-            JSON.stringify(data),
-            id,
-          );
-          result = { server: this.server(this.node(id)) };
+          result = this.updateNode(id,await h.body(req));
         } else if (method === "POST" && action === "token") {
-          const token = "node_" + secret();
-          this.store.run(
-            "UPDATE rental_orders SET expiryAcknowledgedAt=NULL WHERE deploymentId IN (SELECT id FROM deployments WHERE serverId=?)",
-            id,
-          );
-          this.store.run(
-            "UPDATE servers SET tokenHash=?,instanceId=NULL,bootId=NULL,lastHeartbeat=NULL,generation=generation+1,sequence=-1 WHERE id=?",
-            digest(token),
-            id,
-          );
-          result = { agentToken: token };
+          result = this.store.transaction(() => this.rotateNodeToken(id));
         } else {
           check(method === "DELETE" && !action, "Not found", 404, "not_found");
-          check(!this.busy(id), "Node in use", 409, "server_in_use");
-          this.store.run("UPDATE servers SET deleted=1 WHERE id=?", id);
-          result = { ok: true };
+          result = this.deleteNode(id);
         }
       }
     } else {

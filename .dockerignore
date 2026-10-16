@@ -12,5 +12,7 @@
 !server/**
 !tests/
 !tests/**
+!scripts/
+!scripts/build-web.mjs
 !deploy/
 !deploy/compose-nginx.conf

@@ -1,5 +1,7 @@
 # CoreMatrix API 契约
 
+> v12 增量契约：三端入口与会话见 [22](22-portals-certificates.md)，供应商固定 GPU 卡时采购、数据表与接口见 [23](23-suppliers-procurement.md)。以增量章节替代旧入口和供应商范围。
+
 接口分为已实现接口和待开发接口。实现新功能时复用当前同源认证、错误格式与 TypeScript 数据类型；不能把本节的待开发接口当成已可调用服务。
 
 ## 通用约定

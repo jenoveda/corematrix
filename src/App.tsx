@@ -27,6 +27,8 @@ import { emptyState } from "./domain";
 import { request, ApiError } from "./api";
 import type { State } from "./domain";
 import AdminPages from "./pages/AdminPages";
+import AdminLogin from "./AdminLogin";
+import ProviderPages from "./Providers";
 import UserPages from "./pages/UserPages";
 import Dialogs from "./Dialogs";
 import LanguageSelect from "./LanguageSelect";
@@ -35,7 +37,10 @@ import { useI18n } from "./i18n";
 import type { Key, Locale } from "./i18n";
 import { PageHeader } from "./components";
 
-type Role = "admin" | "user";
+type Role = "admin" | "user" | "provider";
+const platform: Role = import.meta.env.VITE_PORTAL === "provider" ? "provider" : import.meta.env.VITE_PORTAL === "admin" ? "admin" : "user";
+const loginPath = platform === "user" ? "#/user/account" : `#/${platform}/login`;
+const homePath = platform === "user" ? "#/user/models" : `#/${platform}/overview`;
 const menus: Record<Role, { id: string; label: Key; icon: LucideIcon }[]> = {
   admin: [
     { id: "overview", label: "nav.overview", icon: LayoutDashboard },
@@ -44,6 +49,8 @@ const menus: Record<Role, { id: string; label: Key; icon: LucideIcon }[]> = {
     { id: "pricing", label: "nav.pricing", icon: Tags },
     { id: "reports", label: "nav.reports", icon: ChartNoAxesCombined },
     { id: "operations", label: "nav.operations", icon: TriangleAlert },
+    { id: "certificates", label: "nav.certificates", icon: KeyRound },
+    { id: "providers", label: "nav.providers", icon: Server },
   ],
   user: [
     { id: "models", label: "nav.models", icon: Sparkles },
@@ -52,13 +59,18 @@ const menus: Record<Role, { id: string; label: Key; icon: LucideIcon }[]> = {
     { id: "wallet", label: "nav.wallet", icon: Wallet },
     { id: "account", label: "nav.account", icon: CircleUserRound },
   ],
+  provider:[
+    {id:"overview",label:"nav.overview",icon:LayoutDashboard},
+    {id:"servers",label:"nav.servers",icon:Server},
+    {id:"billing",label:"provider.entries",icon:Wallet},
+  ],
 };
 function route() {
-  const [, scope, page] = location.hash.replace(/^#/, "").split("/");
-  const role: Role = scope === "admin" ? "admin" : "user";
+  const [, , page] = location.hash.replace(/^#/, "").split("/");
+  const role = platform;
   return {
     role,
-    page: page?.split("?")[0] || (role === "admin" ? "overview" : "models"),
+    page: page?.split("?")[0] || (role === "user" ? "models" : "overview"),
   };
 }
 export default function App() {
@@ -79,7 +91,7 @@ export default function App() {
   const contentRef = useRef<HTMLElement>(null),
     trigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!location.hash) history.replaceState(null, "", "#/user/models");
+    if (!location.hash) history.replaceState(null, "", platform === "user" ? homePath : loginPath);
     function changed() {
       setCurrent(route());
       refresh().catch(() => {});
@@ -95,6 +107,11 @@ export default function App() {
   async function refresh() {
     const sequence = ++refreshSequence.current;
     try {
+      const portal = await request<{origin?:string}>("/api/portal");
+      if (portal.origin && portal.origin !== location.origin) {
+        location.replace(portal.origin + location.pathname + location.hash);
+        return;
+      }
       const next = await request<State>("/api/state");
       if (sequence === refreshSequence.current) {
         setState(next);
@@ -150,7 +167,7 @@ export default function App() {
   async function logout() {
     try {
       await mutate("/api/auth/logout", "POST");
-      location.hash = "#/user/account";
+      location.hash = loginPath;
       notify("auth.loggedOut");
     } catch (e) {
       notify(e instanceof Error ? e : new Error(), true);
@@ -208,8 +225,9 @@ export default function App() {
   }, [locale]);
   const selected = menus[current.role].find((m) => m.id === current.page),
     isAdmin = current.role === "admin";
+  const isProvider=current.role==="provider", platformLabel=isProvider?"app.provider":isAdmin?"app.admin":"app.user";
   const validScope =
-    !location.hash || /^#\/(admin|user)(\/[^/]+)?$/.test(location.hash);
+    !location.hash || new RegExp(`^#/${platform}(/[^/]+)?$`).test(location.hash);
   return (
     <AppContext.Provider
       value={{
@@ -245,7 +263,7 @@ export default function App() {
           </button>
           <a
             className="brand"
-            href={isAdmin ? "#/admin/overview" : "#/user/models"}
+            href={homePath}
           >
             <span className="brand-logo">
               <Boxes size={23} />
@@ -256,23 +274,11 @@ export default function App() {
             <span className="environment-badge">{t("app.dev")}</span>
           )}
         </div>
-        <nav className="platform-switch" aria-label={t("app.user")}>
-          <a href="#/user/models" aria-current={!isAdmin ? "true" : undefined}>
-            {t("app.user")}
-          </a>
-          {state.user?.role === "admin" && (
-            <a
-              href="#/admin/overview"
-              aria-current={isAdmin ? "true" : undefined}
-            >
-              {t("app.admin")}
-            </a>
-          )}
-        </nav>
+        <span className="platform-switch">{t(platformLabel)}</span>
         <LanguageSelect />
         <a
           className="top-profile"
-          href={isAdmin ? "#/admin/overview" : "#/user/account"}
+          href={state.user && platform!=="user" ? homePath : loginPath}
         >
           <span className="avatar">
             {isAdmin ? "A" : state.user?.name.slice(0, 1) || "G"}
@@ -288,7 +294,7 @@ export default function App() {
           <div className="nav-label">
             {isAdmin ? t("app.management") : t("app.workspace")}
           </div>
-          <nav aria-label={isAdmin ? t("app.admin") : t("app.user")}>
+          <nav aria-label={t(platformLabel)}>
             {menus[current.role].map(({ id, label, icon: Icon }) => (
               <a
                 key={id}
@@ -312,7 +318,7 @@ export default function App() {
                 {t("auth.logout")}
               </button>
             ) : (
-              <a className="reset-button" href="#/user/account">
+              <a className="reset-button" href={loginPath}>
                 {t("auth.entry")}
               </a>
             )}
@@ -343,7 +349,7 @@ export default function App() {
           className="main-content"
         >
           <div className="breadcrumb">
-            <span>{isAdmin ? t("app.admin") : t("app.user")}</span>
+            <span>{t(platformLabel)}</span>
             <span>/</span>
             <span>{selected ? t(selected.label) : t("app.notFound")}</span>
           </div>
@@ -368,23 +374,23 @@ export default function App() {
           )}
           {loading ? (
             <p className="muted">{t("app.loading")}</p>
-          ) : mailLink ? (
+          ) : isAdmin && state.user?.role !== "admin" ? (
+            <AdminLogin />
+          ) : isProvider && state.user?.role!=="provider" ? (
+            <AdminLogin portal="provider" allowRegister />
+          ) : isProvider && current.page==="login" ? (
+            <a className="button primary" href={homePath}>{t("nav.overview")}</a>
+          ) : isAdmin && current.page === "login" ? (
+            <a className="button primary" href="#/admin/overview">{t("nav.overview")}</a>
+          ) : mailLink && platform==="user" ? (
             <EmailLinkForm
               key={mailLink.token}
               link={mailLink}
               close={clearMailLink}
             />
           ) : validScope && selected ? (
-            isAdmin && state.user?.role !== "admin" ? (
-              <>
-                <PageHeader
-                  title={state.user ? t("app.forbidden") : t("auth.needLogin")}
-                  description={t("app.adminOnly")}
-                />
-                <a className="button primary" href="#/user/account">
-                  {t("auth.login")}
-                </a>
-              </>
+            isProvider ? (
+              <ProviderPages key={current.page+(state.user?.id||"guest")} page={current.page} />
             ) : isAdmin ? (
               <AdminPages key={current.page} page={current.page} />
             ) : (
@@ -400,7 +406,7 @@ export default function App() {
                 description={t("app.choosePage")}
               />
               <a
-                href={isAdmin ? "#/admin/overview" : "#/user/models"}
+                href={homePath}
                 className="button primary"
               >
                 {t("app.user")}

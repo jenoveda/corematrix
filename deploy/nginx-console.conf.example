@@ -17,7 +17,7 @@ server {
     ssl_certificate /etc/corematrix/tls/fullchain.pem;
     ssl_certificate_key /etc/corematrix/tls/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
-    root /opt/corematrix/current/dist;
+    root /opt/corematrix/current/dist/user;
     index index.html;
     client_max_body_size 256k;
     access_log /var/log/nginx/corematrix-access.log corematrix;

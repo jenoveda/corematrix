@@ -24,7 +24,7 @@ export default function InfrastructureDialog({
       ? state.servers.find((s) => s.id === dialog.serverId)
       : undefined;
   const [node, setNode] = useState(
-    existing || {
+    existing ? {...existing,schedulingEnabled:existing.requestedSchedulingEnabled ?? existing.schedulingEnabled} : {
       workMode: "inference" as const,
       rentalSalesEnabled: false,
       hourlyPrice: 0,
@@ -37,6 +37,7 @@ export default function InfrastructureDialog({
       maintenance: false,
     },
   );
+  const serverPath = state.user?.role === "provider" ? "/api/provider/servers" : "/api/admin/servers";
   const [modelId, setModelId] = useState(
       state.models.find((m) => m.routingMode === "managed")?.id || "",
     ),
@@ -105,7 +106,7 @@ export default function InfrastructureDialog({
     try {
       if (dialog.type === "server") {
         const result = await mutate<{ agentToken?: string }>(
-          existing ? `/api/admin/servers/${existing.id}` : "/api/admin/servers",
+          existing ? `${serverPath}/${existing.id}` : serverPath,
           existing ? "PUT" : "POST",
           node,
         );
@@ -116,14 +117,14 @@ export default function InfrastructureDialog({
       }
       if (dialog.type === "server-token") {
         const result = await mutate<{ agentToken: string }>(
-          `/api/admin/servers/${dialog.serverId}/token`,
+          `${serverPath}/${dialog.serverId}/token`,
           "POST",
         );
         setToken(result.agentToken);
         return;
       }
       if (dialog.type === "delete-server")
-        await mutate(`/api/admin/servers/${dialog.serverId}`, "DELETE");
+        await mutate(`${serverPath}/${dialog.serverId}`, "DELETE");
       if (dialog.type === "deploy" || rental) {
         const body = {
             ...(rental ? { ownerEmail } : { modelId }),
@@ -198,6 +199,7 @@ export default function InfrastructureDialog({
             {token ? (
               <>
                 <Note>{t("server.tokenNote")}</Note>
+                {state.user?.role === "provider" && <Note>{t("provider.agentNote")}</Note>}
                 <label>
                   {t("server.token")}
                   <input
@@ -246,7 +248,7 @@ export default function InfrastructureDialog({
                         </option>
                       </select>
                     </label>
-                    {node.workMode === "gpu-rental" && (
+                    {node.workMode === "gpu-rental" && state.user?.role !== "provider" && (
                       <>
                         <label className="checkbox-label">
                           <input

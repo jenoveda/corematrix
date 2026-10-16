@@ -37,6 +37,10 @@ async function start() {
       NODE_ENV: "production",
       DATABASE_PATH: database,
       PUBLIC_ORIGIN: origin,
+      ADMIN_PUBLIC_ORIGIN: "https://admin.tests.invalid",
+      ADMIN_API_PORT: "3002",
+      PROVIDER_API_PORT: "3003",
+      PROVIDER_PUBLIC_ORIGIN: "https://supplier.tests.invalid",
       API_PORT: "3001",
       SMTP_HOST: "",
       STRIPE_SECRET_KEY: "",
@@ -68,11 +72,13 @@ async function start() {
   throw Error("production API did not become ready");
 }
 async function call(path, method = "GET", body, headers = {}) {
-  const response = await fetch("http://127.0.0.1:3001" + path, {
+  const admin = headers["X-Test-Admin"] === "1";
+  delete headers["X-Test-Admin"];
+  const response = await fetch(`http://127.0.0.1:${admin ? 3002 : 3001}` + path, {
     method,
     signal: AbortSignal.timeout(5000),
     headers: {
-      ...(body ? { "Content-Type": "application/json", Origin: origin } : {}),
+      ...(body ? { "Content-Type": "application/json", Origin: admin ? "https://admin.tests.invalid" : origin } : {}),
       ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -123,13 +129,14 @@ try {
   const adminLogin = await call("/api/auth/login", "POST", {
     email: adminEnv.ADMIN_EMAIL,
     password: adminPassword,
-  });
+  }, { "X-Test-Admin": "1" });
   assert.equal(adminLogin.status, 200);
   assert.equal(adminLogin.data.user.role, "admin");
   assert.equal(
     (
       await call("/api/admin/servers", "GET", undefined, {
         Cookie: adminLogin.headers.get("set-cookie").split(";")[0],
+        "X-Test-Admin": "1",
       })
     ).status,
     200,
@@ -163,7 +170,7 @@ try {
   }
   assert.equal(
     (await call("/api/admin/servers", "GET", undefined, headers)).status,
-    403,
+    404,
   );
   assert.deepEqual(
     (await call("/api/wallet/bills", "GET", undefined, headers)).data,

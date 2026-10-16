@@ -6,6 +6,7 @@ COPY tsconfig.json tsconfig.server.json vite.config.ts index.html ./
 COPY src ./src
 COPY server ./server
 COPY tests ./tests
+COPY scripts/build-web.mjs ./scripts/build-web.mjs
 RUN npm run build
 
 FROM node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS api

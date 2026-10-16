@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { Store } from "../server/store.ts";
+import { LATEST_SCHEMA_VERSION } from "../server/migrations.ts";
 test("upgrade a pre-i18n database twice without changing accounts or historical money", () => {
   const dir = mkdtempSync(join(tmpdir(), "corematrix-migration-")),
     path = join(dir, "db.sqlite");
@@ -23,7 +24,7 @@ test("upgrade a pre-i18n database twice without changing accounts or historical 
     );
     // Reconstruct the deployed v0 schema by removing only the new feature tables/columns.
     s.db.exec(
-      "DROP INDEX requests_pending_deployment;DROP TABLE ops_notifications;DROP TABLE ops_checks;DROP TABLE ops_alerts;DROP INDEX rental_reservation_order;ALTER TABLE rental_orders DROP COLUMN reservationId;ALTER TABLE rental_orders DROP COLUMN scheduledStart;ALTER TABLE rental_orders DROP COLUMN scheduledEnd;DROP TABLE rental_reservations;DROP TABLE payment_refunds;DROP TABLE payment_events;DROP TABLE payment_orders;DROP INDEX users_payment_debt;ALTER TABLE users DROP COLUMN paymentDebt;DROP TABLE account_tokens;ALTER TABLE users DROP COLUMN emailVerifiedAt;DROP TABLE expenses;DROP TABLE rental_actions;DROP TABLE rental_orders;ALTER TABLE requests DROP COLUMN deploymentId;DROP TABLE deployment_events;DROP TABLE deployment_jobs;DROP TABLE gpu_allocations;DROP TABLE port_allocations;DROP TABLE deployments;DROP TABLE gpus;DROP TABLE servers;ALTER TABLE users DROP COLUMN locale;ALTER TABLE ledger DROP COLUMN metadata;DROP TABLE schema_migrations;",
+      "DROP TABLE provider_usage;DROP TABLE provider_settlements;DROP TABLE provider_nodes;DROP TABLE providers;ALTER TABLE users DROP COLUMN accountType;DROP INDEX requests_pending_deployment;DROP TABLE ops_notifications;DROP TABLE ops_checks;DROP TABLE ops_alerts;DROP INDEX rental_reservation_order;ALTER TABLE rental_orders DROP COLUMN reservationId;ALTER TABLE rental_orders DROP COLUMN scheduledStart;ALTER TABLE rental_orders DROP COLUMN scheduledEnd;DROP TABLE rental_reservations;DROP TABLE payment_refunds;DROP TABLE payment_events;DROP TABLE payment_orders;DROP INDEX users_payment_debt;ALTER TABLE users DROP COLUMN paymentDebt;DROP TABLE account_tokens;ALTER TABLE users DROP COLUMN emailVerifiedAt;DROP TABLE expenses;DROP TABLE rental_actions;DROP TABLE rental_orders;DROP INDEX gpus_uuid;ALTER TABLE requests DROP COLUMN deploymentId;DROP TABLE deployment_events;DROP TABLE deployment_jobs;DROP TABLE gpu_allocations;DROP TABLE port_allocations;DROP TABLE deployments;DROP TABLE gpus;DROP TABLE servers;ALTER TABLE users DROP COLUMN locale;ALTER TABLE ledger DROP COLUMN metadata;DROP TABLE schema_migrations;",
     );
     s.close();
     for (let i = 0; i < 2; i++) {
@@ -34,7 +35,7 @@ test("upgrade a pre-i18n database twice without changing accounts or historical 
       assert.equal(s.user(user.id)?.locale, "zh-CN");
       assert.equal(s.snapshot(s.user(user.id)).bills[0].quantity, "历史原文");
       assert.equal(s.snapshot(s.user(user.id)).bills[0].metadata, null);
-      assert.equal(s.all("SELECT * FROM schema_migrations").length, 11);
+      assert.equal(s.all("SELECT * FROM schema_migrations").length, LATEST_SCHEMA_VERSION);
       if (i === 0) s.close();
     }
   } finally {

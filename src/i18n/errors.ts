@@ -3,6 +3,10 @@ import type { Key, Locale } from "./messages.ts";
 
 const fieldLabels: Record<string, Key> = {
   body: "validation.body",
+  ratePerGpuHour: "provider.procurementPrice",
+  origin: "tls.origin",
+  certificate: "tls.certificate",
+  privateKey: "tls.privateKey",
   name: "common.name",
   email: "auth.email",
   password: "auth.password",

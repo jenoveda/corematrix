@@ -13,6 +13,7 @@ import (
 
 type config struct {
 	InferenceLoopback                                                bool
+	NodeScopedKeys                                                   bool
 	URL, Token, Image, Digest, ModelDir, CacheDir, StateDir, ShmSize string
 	WorkspaceImage, WorkspaceDigest, WorkspaceDir, WorkspaceKeyEnv   string
 	WorkspaceBindIP                                                  string
@@ -25,6 +26,7 @@ var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)
 var revisionPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 var modelPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 var keyPattern = regexp.MustCompile(`^INFERENCE_[A-Z0-9_]+$`)
+var nodeCredentialPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func diagnostic(code string) error { return errors.New(code) }
 func loadConfig() (config, error) {
@@ -41,6 +43,14 @@ func loadConfig() (config, error) {
 	}
 	c.WorkspaceImage = os.Getenv("COREMATRIX_WORKSPACE_IMAGE")
 	c.WorkspaceKeyEnv = os.Getenv("COREMATRIX_WORKSPACE_KEY_ENV")
+	scoped := os.Getenv("COREMATRIX_NODE_SCOPED_KEYS")
+	if scoped != "" && scoped != "0" && scoped != "1" {
+		return c, diagnostic("invalid_node_scoped_keys")
+	}
+	c.NodeScopedKeys = scoped == "1"
+	if c.NodeScopedKeys {
+		c.WorkspaceKeyEnv = "INFERENCE_COREMATRIX_NODE_WORKSPACE"
+	}
 	if c.WorkspaceKeyEnv == "" {
 		c.WorkspaceKeyEnv = "INFERENCE_JUPYTER_KEY"
 	}
@@ -58,7 +68,7 @@ func loadConfig() (config, error) {
 			*pair.digest = strings.Split(pair.image, "@")[1]
 		}
 	}
-	if c.WorkspaceImage != "" && (!keyPattern.MatchString(c.WorkspaceKeyEnv) || len(os.Getenv(c.WorkspaceKeyEnv)) < 32) {
+	if c.WorkspaceImage != "" && (!keyPattern.MatchString(c.WorkspaceKeyEnv) || (!c.NodeScopedKeys && len(os.Getenv(c.WorkspaceKeyEnv)) < 32)) {
 		return c, diagnostic("workspace_key_missing")
 	}
 	loopback := os.Getenv("COREMATRIX_INFERENCE_LOOPBACK")

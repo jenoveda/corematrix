@@ -116,7 +116,7 @@ export class Reservations {
     // Heartbeat age cannot release a physical GPU; idle old registrations must be decommissioned.
     return !!this.store.get(
       `SELECT 1 FROM (SELECT uuid FROM gpus WHERE serverId=? AND missing=0 UNION SELECT uuid FROM gpu_allocations WHERE serverId=? AND released=0) own
-       WHERE EXISTS(SELECT 1 FROM gpus g JOIN servers s ON s.id=g.serverId AND s.deleted=0 WHERE g.uuid=own.uuid AND g.serverId!=? AND g.missing=0)
+       WHERE EXISTS(SELECT 1 FROM gpus g JOIN servers s ON s.id=g.serverId AND s.deleted=0 LEFT JOIN provider_nodes pn ON pn.serverId=g.serverId WHERE g.uuid=own.uuid AND g.serverId!=? AND g.missing=0 AND (pn.serverId IS NULL OR pn.approved=1))
           OR EXISTS(SELECT 1 FROM gpu_allocations a WHERE a.uuid=own.uuid AND a.serverId!=? AND a.released=0) LIMIT 1`,
       serverId,
       serverId,

@@ -123,6 +123,15 @@ func TestConfigValidationAndLock(t *testing.T) {
 	if c.Image != "" || c.WorkspaceDigest == "" {
 		t.Fatal("rental-only node requires model runtime")
 	}
+	t.Setenv("COREMATRIX_NODE_SCOPED_KEYS", "invalid")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("invalid scoped key mode accepted")
+	}
+	t.Setenv("COREMATRIX_NODE_SCOPED_KEYS", "1")
+	t.Setenv("INFERENCE_JUPYTER_KEY", "")
+	if scoped, err := loadConfig(); err != nil || !scoped.NodeScopedKeys || scoped.WorkspaceKeyEnv != "INFERENCE_COREMATRIX_NODE_WORKSPACE" {
+		t.Fatal("scoped node required a platform-wide secret", err)
+	}
 	lock, err := lockNode(c.StateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +148,50 @@ func TestConfigValidationAndLock(t *testing.T) {
 	t.Setenv("COREMATRIX_URL", "https://control.example.com?token=secret")
 	if _, err := loadConfig(); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatal("URL query accepted or leaked")
+	}
+}
+func TestScopedHeartbeatBootstrapsOnlyValidatedCredentials(t *testing.T) {
+	inference, workspace := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	t.Setenv("INFERENCE_COREMATRIX_NODE_INFERENCE", "")
+	t.Setenv("INFERENCE_COREMATRIX_NODE_WORKSPACE", "")
+	valid := false
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Capabilities struct {
+				NodeScopedKeys bool `json:"nodeScopedKeys"`
+			} `json:"capabilities"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		if !payload.Capabilities.NodeScopedKeys {
+			t.Error("scoped capability missing")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if valid {
+			fmt.Fprintf(w, `{"ok":true,"generation":1,"credentials":{"inference":%q,"workspace":%q}}`, inference, workspace)
+		} else {
+			w.Write([]byte(`{"ok":true,"generation":1,"credentials":{"inference":"bad","workspace":"bad"}}`))
+		}
+	}))
+	defer source.Close()
+	c := testConfig(t)
+	c.NodeScopedKeys = true
+	c.URL = source.URL
+	a := agent{cfg: c, client: httpClient(time.Second), instance: testID, boot: testID}
+	a.run = func(_ context.Context, args []string, _ time.Duration, _ []string) (string, error) {
+		if args[0] == "nvidia-smi" && strings.HasPrefix(args[1], "--query-gpu") {
+			return "0, GPU-a, Test, 24000, 0, 0, 43, Disabled", nil
+		}
+		return "", nil
+	}
+	if _, err := a.heartbeat(context.Background()); err == nil || a.identity().Generation != nil || os.Getenv("INFERENCE_COREMATRIX_NODE_INFERENCE") != "" {
+		t.Fatal("invalid keys enabled job claims")
+	}
+	valid = true
+	if _, err := a.heartbeat(context.Background()); err != nil || a.identity().Generation == nil {
+		t.Fatal("valid bootstrap failed", err)
+	}
+	if os.Getenv("INFERENCE_COREMATRIX_NODE_INFERENCE") != inference || os.Getenv("INFERENCE_COREMATRIX_NODE_WORKSPACE") != workspace {
+		t.Fatal("credentials not installed")
 	}
 }
 func TestAPIRejectsRedirectAndOversize(t *testing.T) {

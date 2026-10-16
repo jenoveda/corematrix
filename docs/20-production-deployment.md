@@ -1,4 +1,6 @@
-# 单实例生产部署与 v11 路由
+# 单实例生产部署与受管路由
+
+最新三端入口、证书与 v12 供应商契约见 [身份隔离与证书](22-portals-certificates.md) 和 [固定采购计费](23-suppliers-procurement.md)。历史 v11 路由说明仍适用。
 
 本次交付包含受管实例负载分流、启动配置校验、API systemd/反向代理模板，以及双模式节点共用 TLS 代理的绑定配置。没有修改用户机器的系统服务、域名或证书；真实生产、GPU 和渠道验收仍未完成。
 
@@ -12,9 +14,9 @@ v11 仅增加 requests_pending_deployment 与 deployments_ready_model 两个部�
 
 ## 生产入口校验
 
-`NODE_ENV=production` 要求固定 HTTPS PUBLIC_ORIGIN 和持久化目录中的绝对 DATABASE_PATH，拒绝内存库和相对路径。配置失败在创建数据库和监听之前退出。API_PORT 必须为 1–65535 整数；推理允许列表只能包含 HTTP(S) origin，禁止凭据、路径、查询和片段，规范化默认端口及大小写。
+`NODE_ENV=production` 要求三个不同的固定 HTTPS PUBLIC_ORIGIN、ADMIN_PUBLIC_ORIGIN、PROVIDER_PUBLIC_ORIGIN 和持久化目录中的绝对 DATABASE_PATH，拒绝内存库和相对路径。配置失败在创建数据库和监听之前退出。API_PORT 必须为 1–65535 整数；推理允许列表只能包含 HTTP(S) origin，禁止凭据、路径、查询和片段，规范化默认端口及大小写。
 
-开发默认仍使用 data/corematrix.sqlite、API 3001、同源检查及原账号。生产静态构建隐藏开发环境标记，不影响开发服务器标记。
+开发默认仍使用 data/corematrix.sqlite、API 3001/3002/3003、页面 5173/5174/5175、同源检查及原账号。生产静态构建隐藏开发环境标记，不影响开发服务器标记。
 
 ## API 与控制台
 
@@ -22,7 +24,9 @@ v11 仅增加 requests_pending_deployment 与 deployments_ready_model 两个部�
 
 - [API 环境模板](../deploy/corematrix-api.env.example)
 - [API systemd unit](../deploy/corematrix-api.service)
-- [控制台 Nginx 模板](../deploy/nginx-console.conf.example)
+- [用户端 Nginx 模板](../deploy/nginx-console.conf.example)：dist/user、API 3001、HTTPS 443
+- [管理端 Nginx 模板](../deploy/nginx-admin.conf.example)：dist/admin、API 3002、HTTPS 8443
+- [供应商端 Nginx 模板](../deploy/nginx-provider.conf.example)：dist/provider、API 3003、HTTPS 8444
 
 模板目录约定：程序和已构建 dist 位于 `/opt/corematrix/current`，持久化数据在 `/var/lib/corematrix`，配置为 `/etc/corematrix/api.env`。API 由专用 corematrix 用户运行；unit 的私有状态目录与只读程序目录遵循 [systemd 执行环境规范](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml)。按实际 Node 安装位置校对 ExecStart，不能假定所有发行版均在 /usr/bin/node。
 
@@ -65,11 +69,11 @@ COREMATRIX_INFERENCE_LOOPBACK=1
 COREMATRIX_WORKSPACE_BIND_IP=127.0.0.1
 ```
 
-未配置 INFERENCE_LOOPBACK 或为 0 时保留原推理发布方式；仅 1 启用 loopback，其余值拒绝启动。改变前先排空并确认停止相关容器；已有容器不会自动修改绑定或 Jupyter 参数，禁止为了应用参数删除占用账本。部署新二进制时保留 Agent 状态与租用期限文件。协议仍为兼容的 4-go。
+未配置 INFERENCE_LOOPBACK 或为 0 时保留原推理发布方式；仅 1 启用 loopback，其余值拒绝启动。改变前先排空并确认停止相关容器；已有容器不会自动修改绑定或 Jupyter 参数，禁止为了应用参数删除占用账本。部署新二进制时保留 Agent 状态与租用期限文件。协议在旧密钥模式下仍兼容 4-go。供应商使用 5-go，启用 COREMATRIX_NODE_SCOPED_KEYS=1，见采购文档。
 
 两种模式的容器都发布到 127.0.0.1 的分配端口，TLS 代理监听节点实际 IP 的同一端口，避免推理容器绑定全部网卡时与代理冲突。节点登记使用 `https://受控节点IP`，主机名须与控制台隔离；证书需覆盖该 IP 并被控制面、浏览器信任。私有 CA 通过受控信任配置提供，不能关闭证书验证。
 
-代理按路径转发：`/v1/` 仅允许真实控制面来源 IP（替换 CONTROL_PLANE_IP，其他来源拒绝）；Jupyter 使用既有 `/api/compute/rentals/` 基址及每实例独立凭证。必须配置控制面与节点一致的模型推理密钥，公开代理不等于允许用户绕过平台调用模型。
+代理按路径转发：`/v1/` 仅允许真实控制面来源 IP（替换 CONTROL_PLANE_IP，其他来源拒绝）；Jupyter 使用既有 `/api/compute/rentals/` 基址及每实例独立凭证。自有旧节点须配置一致的推理密钥；供应商通过认证心跳获取本节点独立密钥，公开代理不等于允许用户绕过平台调用模型。
 
 为登记端口范围逐一补齐 listen 指令；上游使用 `$server_port` 转发到对应 loopback 端口。只配置 8000 不能交付被分配到 8001 等端口的容器。IPv6 的 listen 地址加方括号；Node 主机 origin 仍按 URL 标准填写。
 
@@ -96,7 +100,7 @@ docker pull nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cf
 npm run test:nginx
 ```
 
-`scripts/verify-nginx.mjs` 直接读取两个 deploy 模板，仅替换测试证书/静态目录、节点监听 IP 和控制面允许 IP，包装为完整配置后交给真实 Nginx。测试容器使用 `--pull=never --network=none --read-only`，不发布端口；只挂载临时目录，并使用 tmpfs 保存临时运行文件。测试私钥权限 0600，结束后删除临时证书、配置及测试二进制，不读取 `.env`、业务数据库或生产私钥，不安装主机 Nginx。另以无效指令验证检查确实返回失败。
+`scripts/verify-nginx.mjs` 直接读取用户、管理员、供应商及节点四个 deploy 模板，仅替换测试证书/静态目录、节点监听 IP 和控制面允许 IP，包装为完整配置后交给真实 Nginx。测试容器使用 `--pull=never --network=none --read-only`，不发布端口；只挂载临时目录，并使用 tmpfs 保存临时运行文件。测试私钥权限 0600，结束后删除临时证书、配置及测试二进制，不读取 `.env`、业务数据库或生产私钥，不安装主机 Nginx。另以无效指令验证检查确实返回失败。
 
 随后按镜像的 amd64/arm64 架构，用 Go 标准库编译 `tests/nginx/runtime_test.go`，在同一无网络容器内启动真实 Nginx 和 loopback 协议后端。当前 Linux/arm64、Nginx 1.30.6 已验证：
 

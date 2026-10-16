@@ -10,8 +10,11 @@ import { createApplication } from "../server/app.ts";
 import { Infrastructure } from "../server/infrastructure.ts";
 import { secret, digest } from "../server/auth.ts";
 import { reconcile } from "../server/finance.ts";
+import { financeReport } from "../server/finance.ts";
+import { providerReport, settleProvider } from "../server/providers.ts";
+import { NODE_WORKSPACE_KEY } from "../server/node-credentials.ts";
 
-async function fixture(t: any) {
+async function fixture(t: any, nodeScopedKeys = false) {
   process.env.INFERENCE_JUPYTER_KEY = "test-rental-master-key-" + secret();
   const lab = createServer((_, res) => {
     res.setHeader("content-type", "application/json");
@@ -103,6 +106,7 @@ async function fixture(t: any) {
         workspaceImageDigest: "sha256:" + "b".repeat(64),
         runtimeImageDigest: "",
         workspaceKeyEnv: "INFERENCE_JUPYTER_KEY",
+        nodeScopedKeys,
       },
       inventoryError: error,
       gpus: [0, 1].map((i) => ({
@@ -241,6 +245,41 @@ async function fixture(t: any) {
     },
   };
 }
+
+test("supplier procurement locks GPU-hour price, survives renewal/refund, and settles only confirmed cleanup",async t=>{
+  const f=await fixture(t,true),provider=f.s.createUser("Supplier","supplier-rental@tests.invalid","unused","provider");
+  f.s.run("UPDATE providers SET status='approved',ratePerGpuHour=1800000 WHERE userId=?",provider.id);
+  f.s.run("INSERT INTO provider_nodes(serverId,providerId,approved,reviewedGpuUuids) VALUES(?,?,1,?)",f.node,provider.id,JSON.stringify(["GPU-0","GPU-1"]));
+  f.s.run("INSERT INTO ledger(id,userId,type,resource,quantity,amount,time,day) VALUES(?,?,'recharge','Test funds','',100000000,?,?)",randomUUID(),f.user.id,new Date().toISOString(),"2026-10-16");
+  const order=f.purchase();
+  assert.equal(providerReport(f.s,provider.id).earnings.length,0);
+  assert.equal(JSON.parse(f.infra.dep(order.deploymentId).spec).apiKeyEnv,NODE_WORKSPACE_KEY);
+  await f.ready(order);f.acknowledge();
+  f.s.run("UPDATE provider_usage SET startedAt=? WHERE deploymentId=?",Date.now()-2100,order.deploymentId);
+  assert.equal(providerReport(f.s,provider.id).summary.available,0);
+  assert(providerReport(f.s,provider.id).summary.pending>=1000);
+  f.s.run("UPDATE providers SET ratePerGpuHour=9000000 WHERE userId=?",provider.id);
+  f.billing.act(f.infra,f.user.id,order.id,"renew",randomUUID(),{hours:1});f.acknowledge();
+  f.s.run("UPDATE rental_orders SET startedAt=? WHERE id=?",Date.now()-2100,order.id);
+  f.billing.act(f.infra,f.user.id,order.id,"cancel",randomUUID(),{});
+  assert.throws(()=>settleProvider(f.s,provider.id,{amount:1,reference:"not-yet-payable",reason:"No payment"},f.admin.id));
+  f.cleanup(order);
+  const report=providerReport(f.s,provider.id),entry=report.earnings[0];
+  assert.equal(report.earnings.length,1);assert.equal(entry.ratePerGpuHour,1800000);
+  const expected=Math.floor((entry.endedAt!-entry.startedAt)/1000)*500;
+  assert.equal(report.summary.earned,expected);assert.equal(report.summary.available,expected);assert.equal(report.summary.pending,0);
+  const body={amount:expected,reference:"paid-supplier-receipt-1",reason:"Completed offline payment"};
+  settleProvider(f.s,provider.id,body,f.admin.id);settleProvider(f.s,provider.id,body,f.admin.id);
+  assert.equal(providerReport(f.s,provider.id).summary.paid,expected);assert.equal(providerReport(f.s,provider.id).summary.available,0);
+  assert.equal(f.s.all("SELECT * FROM provider_settlements").length,1);
+  const financial=financeReport(f.s,new URLSearchParams({from:new Date(Date.now()-86400000).toISOString().slice(0,10),to:new Date(Date.now()+86400000).toISOString().slice(0,10)})),closed=f.billing.row(order.deploymentId)!;
+  assert.equal(financial.cost,expected);assert.equal(financial.profit,closed.charged-closed.refunded-expected);
+  assert.equal(financial.byCategory.find(row=>row.category==="provider")?.amount,expected);
+  assert.equal(reconcile(f.s).healthy,true);
+  f.s.run("UPDATE provider_usage SET amount=amount+1 WHERE deploymentId=?",order.deploymentId);
+  assert(reconcile(f.s).issues.some(row=>row.code==="provider_procurement_amount"));
+  assert(reconcile(f.s).issues.some(row=>row.code==="provider_settlement_amount"));
+});
 
 test("paid rental HTTP: private offers, exact quote, atomic holds and idempotent purchase", async (t) => {
   const f = await fixture(t),
