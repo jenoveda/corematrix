@@ -4,13 +4,12 @@ React + TypeScript 双端控制台，Node.js HTTP 后端，SQLite 持久化账�
 
 ## 持续集成
 
-[GitHub Actions CI](https://github.com/jenoveda/corematrix/actions/workflows/ci.yml) 在每次推送和 Pull Request 时自动执行，也支持手动运行。三个任务在 Ubuntu 上并行检查：
+[GitHub Actions CI](https://github.com/jenoveda/corematrix/actions/workflows/ci.yml) 在每次推送和 Pull Request 时自动执行，也支持手动运行。两个任务在 Ubuntu 上并行检查：
 
-- 前后端构建：Node.js 24，`npm ci` 后执行 `npm run build`，包含前后端 TypeScript 检查与 Vite 打包。
 - 后端测试：Node.js 24，`npm ci` 后执行 `npm test`。
 - Go Agent 测试：Go 版本读取 `agent/go.mod`，执行 `go -C agent test -race ./...`。
 
-CI 不需要配置业务密钥，测试使用独立临时数据与替身服务；真实 GPU、模型推理、支付及邮件投递仍需单独验收。流程配置见 [ci.yml](.github/workflows/ci.yml)。
+前后端构建通过本地 `npm run build` 执行，云端不运行构建任务。CI 不需要配置业务密钥，测试使用独立临时数据与替身服务；真实 GPU、模型推理、支付及邮件投递仍需单独验收。流程配置见 [ci.yml](.github/workflows/ci.yml)。
 
 ## 开发设计文档
 
